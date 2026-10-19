@@ -1,0 +1,41 @@
+
+# Ambientes e configurações
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+
+# Dados da Rossmann
+dados/brutos/
+dados/processados/
+
+# Arquivos grandes e gerados
+*.csv
+*.parquet
+*.npz
+
+# Modelos e artefatos gerados
+*.pkl
+*.joblib
+*.npz
+*.parquet
+*.log
+backend/modelos/
+backend/resultados/
+
+# Sistema e editor
+.DS_Store
+Thumbs.db
+.vscode/
