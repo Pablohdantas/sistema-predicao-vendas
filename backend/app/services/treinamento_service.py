@@ -6,6 +6,7 @@ Gerenciamento local dos treinamentos AutoML.
 - Processamento em thread separada.
 - Status persistido em JSON.
 - Preparação automática dos atributos.
+- Avaliação externa automática no modo definitivo.
 - Compatível com os modos teste e definitivo.
 
 Projetado inicialmente para uma instância da API,
@@ -15,6 +16,7 @@ com um único processo de servidor.
 import json
 import os
 import threading
+
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +25,9 @@ from backend.app.services.atributos_service import (
 )
 from backend.app.services.automl_service import (
     executar_pipeline_automl
+)
+from backend.app.services.avaliacao_externa_service import (
+    avaliar_modelo_externo
 )
 from backend.app.services.execucoes_service import (
     PASTA_EXECUCOES
@@ -70,6 +75,7 @@ def gravar_status(pasta: Path, dados: dict) -> None:
     """
 
     destino = pasta / NOME_STATUS
+
     temporario = pasta / (
         f".{NOME_STATUS}.{threading.get_ident()}.tmp"
     )
@@ -83,7 +89,9 @@ def gravar_status(pasta: Path, dados: dict) -> None:
             ),
             encoding="utf-8"
         )
+
         os.replace(temporario, destino)
+
     finally:
         if temporario.exists():
             temporario.unlink()
@@ -97,8 +105,6 @@ def consultar_treinamento(execucao_id: str) -> dict:
     interrupção do servidor será identificado
     quando não existir tarefa ativa nesta instância.
     """
-
-    global EXECUCAO_ATIVA
 
     pasta = pasta_da_execucao(execucao_id)
     caminho = pasta / NOME_STATUS
@@ -128,6 +134,7 @@ def consultar_treinamento(execucao_id: str) -> dict:
                 "A tarefa não está ativa neste processo. "
                 "O treinamento pode ter sido interrompido."
             )
+
             gravar_status(pasta, dados)
 
     return dados
@@ -139,7 +146,12 @@ def executar_em_segundo_plano(
     tentativas: int,
     tempo_por_algoritmo: int
 ) -> None:
-    """Executa o pipeline e atualiza seu status."""
+    """
+    Executa o pipeline AutoML e atualiza o status.
+
+    No modo definitivo, também calcula a avaliação
+    temporal externa antes de concluir a execução.
+    """
 
     global EXECUCAO_ATIVA, THREAD_ATIVA
 
@@ -151,6 +163,7 @@ def executar_em_segundo_plano(
             caminho_status.read_text(encoding="utf-8")
         )
 
+        # ETAPA 1: PREPARAR ATRIBUTOS
         dados_status["etapa"] = "preparando_atributos"
         dados_status["atualizado_em"] = agora()
         gravar_status(pasta, dados_status)
@@ -158,6 +171,7 @@ def executar_em_segundo_plano(
         if not (pasta / "atributos_h7.csv").is_file():
             preparar_atributos_execucao(pasta)
 
+        # ETAPA 2: EXECUTAR AUTOML
         dados_status["etapa"] = "otimizando_modelos"
         dados_status["atualizado_em"] = agora()
         gravar_status(pasta, dados_status)
@@ -169,6 +183,35 @@ def executar_em_segundo_plano(
             tempo_por_algoritmo=tempo_por_algoritmo
         )
 
+        # ETAPA 3: AVALIAR TESTE EXTERNO
+        # Apenas no treinamento definitivo.
+        metricas_externas = None
+
+        if not modo_teste:
+            dados_status["etapa"] = "avaliando_teste_externo"
+            dados_status["atualizado_em"] = agora()
+            gravar_status(pasta, dados_status)
+
+            modelo_salvo = pasta / "modelo_vencedor.joblib"
+
+            if not modelo_salvo.is_file():
+                raise FileNotFoundError(
+                    "O treinamento definitivo terminou, "
+                    "mas o modelo vencedor não foi salvo."
+                )
+
+            metricas_externas = avaliar_modelo_externo(
+                pasta
+            )
+
+            if metricas_externas["quantidade_previsoes"] <= 0:
+                raise ValueError(
+                    "A avaliação externa não gerou previsões."
+                )
+
+        # ETAPA 4: REGISTRAR CONCLUSÃO
+        # Só chega aqui quando todas as etapas
+        # obrigatórias foram concluídas.
         dados_status.update({
             "status": "concluido",
             "etapa": "finalizado",
@@ -189,7 +232,8 @@ def executar_em_segundo_plano(
                 ),
                 "tempo_total_segundos": (
                     resultado["tempo_total_segundos"]
-                )
+                ),
+                "avaliacao_externa": metricas_externas
             },
             "erro": None
         })
@@ -197,7 +241,7 @@ def executar_em_segundo_plano(
         gravar_status(pasta, dados_status)
 
     except Exception as erro:
-        # Registra a falha e libera a fila.
+        # Registra a falha e libera a execução.
         print(
             f"Erro no treinamento {execucao_id}: "
             f"{type(erro).__name__}: {erro}",
@@ -214,6 +258,7 @@ def executar_em_segundo_plano(
                 else "treinamento_definitivo"
             ),
             "atualizado_em": agora(),
+            "finalizado_em": agora(),
             "erro": (
                 f"{type(erro).__name__}: {erro}"
             ),
@@ -273,7 +318,8 @@ def iniciar_treinamento(
 
             if (
                 anterior.get("status") == "concluido"
-                and anterior.get("modo") == "treinamento_definitivo"
+                and anterior.get("modo")
+                == "treinamento_definitivo"
             ):
                 raise RuntimeError(
                     "Esta execução já possui um treinamento "
@@ -326,15 +372,18 @@ def iniciar_treinamento(
 
         try:
             thread.start()
+
         except Exception:
             EXECUCAO_ATIVA = None
             THREAD_ATIVA = None
 
             status["status"] = "falhou"
             status["etapa"] = "erro_inicializacao"
+            status["finalizado_em"] = agora()
             status["erro"] = (
                 "Não foi possível iniciar a tarefa."
             )
+
             gravar_status(pasta, status)
             raise
 
