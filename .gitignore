@@ -39,3 +39,9 @@ backend/resultados/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Arquivos enviados pelos usuários e execuções AutoML
+backend/execucoes/
+
+# Backups temporários
+*_backup.py
