@@ -1,16 +1,32 @@
 
+"""
+Aplicação FastAPI do Sistema de Predição de Vendas.
+"""
+
 from fastapi import FastAPI
 
-from backend.app.routers.previsoes import router as previsoes_router
-from backend.app.routers.datasets import router as datasets_router
+from backend.app.routers.previsoes import (
+    router as previsoes_router
+)
+from backend.app.routers.datasets import (
+    router as datasets_router
+)
+from backend.app.routers.treinamentos import (
+    router as treinamentos_router
+)
+from backend.app.routers.avaliacoes import (
+    router as avaliacoes_router
+)
+
 
 app = FastAPI(
     title="Sistema de Predição de Vendas",
     description=(
-        "API para previsão de vendas utilizando "
-        "AutoML, XGBoost e explicabilidade SHAP."
+        "API para upload de datasets, treinamento AutoML "
+        "com LightGBM e XGBoost, avaliação temporal, "
+        "previsão de vendas e explicabilidade SHAP."
     ),
-    version="1.0.0"
+    version="1.2.0"
 )
 
 
@@ -24,10 +40,10 @@ def inicio():
 
 @app.get("/health")
 def verificar_saude():
-    return {
-        "status": "ok"
-    }
+    return {"status": "ok"}
 
 
-app.include_router(previsoes_router)
 app.include_router(datasets_router)
+app.include_router(treinamentos_router)
+app.include_router(avaliacoes_router)
+app.include_router(previsoes_router)

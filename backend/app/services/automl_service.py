@@ -29,7 +29,7 @@ from flaml import tune
 from lightgbm import LGBMRegressor
 from xgboost import XGBRegressor
 
-from dados.scripts.validacao_temporal import criar_divisoes
+from backend.app.services.validacao_temporal_adaptativa_service import criar_divisoes
 
 from backend.app.services.divisao_temporal_service import (
     dividir_dataset_temporalmente

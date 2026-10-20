@@ -1,12 +1,9 @@
 
 """
-Serviço de validação de CSV.
+Validação dos CSVs enviados à API.
 
-Reutiliza o contrato e o validador do template
-já implementados em dados/scripts/template.py.
-
-Esta etapa apenas valida o conteúdo recebido.
-Não executa AutoML nem altera os dados originais.
+Aceita históricos a partir de 90 datas distintas.
+Preserva os limites originais dos scripts experimentais.
 """
 
 from io import BytesIO
@@ -21,22 +18,18 @@ from dados.scripts.template import (
 
 TAMANHO_MAXIMO_BYTES = 100 * 1024 * 1024
 
+MIN_LINHAS_API = 90
+MIN_DIAS_API = 90
 
-def validar_csv(conteudo: bytes, nome_arquivo: str):
-    """
-    Recebe os bytes de um arquivo CSV e retorna
-    um relatório estruturado de validação.
-    """
 
+def validar_csv(conteudo: bytes, nome_arquivo: str) -> dict:
     if not nome_arquivo.lower().endswith(".csv"):
         raise ValueError(
             "O arquivo precisa ter extensão .csv."
         )
 
     if not conteudo:
-        raise ValueError(
-            "O arquivo enviado está vazio."
-        )
+        raise ValueError("O arquivo enviado está vazio.")
 
     if len(conteudo) > TAMANHO_MAXIMO_BYTES:
         raise ValueError(
@@ -52,12 +45,21 @@ def validar_csv(conteudo: bytes, nome_arquivo: str):
             },
             encoding="utf-8-sig"
         )
-    except (UnicodeError, pd.errors.ParserError, ValueError) as erro:
+
+    except (
+        UnicodeError,
+        pd.errors.ParserError,
+        ValueError
+    ) as erro:
         raise ValueError(
             f"Não foi possível ler o CSV: {erro}"
         ) from erro
 
-    resultado = validar_template(df)
+    resultado = validar_template(
+        df,
+        min_linhas=MIN_LINHAS_API,
+        min_dias=MIN_DIAS_API
+    )
 
     relatorio = {
         "nome_arquivo": nome_arquivo,

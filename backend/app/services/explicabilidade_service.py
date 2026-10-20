@@ -1,12 +1,12 @@
 
 """
-Serviço de explicabilidade individual com SHAP.
+Explicabilidade individual com SHAP.
 
-Calcula uma explicação para os atributos recebidos,
-usando o mesmo XGBoost e o mesmo pré-processamento
-do serviço de previsão.
+Suporta o modelo experimental e os modelos vencedores
+AutoML, tanto LightGBM quanto XGBoost.
 
-Não treina nem modifica o modelo.
+As contribuições explicam a previsão do modelo,
+não representam relações causais.
 """
 
 from functools import lru_cache
@@ -16,43 +16,41 @@ import shap
 
 from backend.app.services.previsao_service import (
     carregar_modelo,
-    preparar_atributos,
+    preparar_entrada_modelo
 )
 
 
-@lru_cache(maxsize=1)
-def carregar_explicador():
+@lru_cache(maxsize=4)
+def carregar_explicador(
+    execucao_id: str | None = None
+):
     """
-    Cria o explicador SHAP uma única vez
-    por processo.
+    Cria um explicador para o modelo correspondente.
+
+    Cada execução possui seu próprio modelo.
     """
-    artefato = carregar_modelo()
+
+    artefato = carregar_modelo(execucao_id)
 
     return shap.TreeExplainer(
-        artefato["modelo"]
+        artefato["modelo"],
+        model_output="raw"
     )
 
 
-def explicar_previsao(dados, quantidade_atributos=10):
+def explicar_previsao(
+    dados: dict,
+    quantidade_atributos: int = 10,
+    execucao_id: str | None = None
+) -> dict:
     """
-    Retorna a previsão, o valor-base SHAP e
-    as contribuições de seus atributos.
-
-    Recebe os mesmos 18 atributos originais
-    utilizados pelo serviço de previsão.
+    Retorna previsão, valor-base e contribuições SHAP
+    para exatamente uma observação.
     """
 
-    if not 1 <= quantidade_atributos <= 23:
-        raise ValueError(
-            "A quantidade de atributos deve "
-            "estar entre 1 e 23."
-        )
-
-    artefato = carregar_modelo()
-
-    x = preparar_atributos(
+    artefato, x = preparar_entrada_modelo(
         dados,
-        artefato["preprocessamento"]
+        execucao_id
     )
 
     if len(x) != 1:
@@ -61,26 +59,45 @@ def explicar_previsao(dados, quantidade_atributos=10):
             "exatamente uma observação."
         )
 
+    if not 1 <= quantidade_atributos <= x.shape[1]:
+        raise ValueError(
+            "A quantidade de atributos deve estar "
+            f"entre 1 e {x.shape[1]}."
+        )
+
     modelo = artefato["modelo"]
 
     previsao = float(
         modelo.predict(x)[0]
     )
 
-    explicador = carregar_explicador()
+    explicador = carregar_explicador(execucao_id)
 
     explicacao = explicador(x)
 
-    valores_shap = np.asarray(
-        explicacao.values[0],
+    valores = np.asarray(
+        explicacao.values,
         dtype=float
     )
 
-    valor_base = float(
-        np.asarray(
-            explicacao.base_values[0]
-        ).item()
-    )
+    if valores.shape != (1, x.shape[1]):
+        raise ValueError(
+            "Formato inesperado das contribuições SHAP."
+        )
+
+    valores_shap = valores[0]
+
+    bases = np.asarray(
+        explicacao.base_values,
+        dtype=float
+    ).reshape(-1)
+
+    if len(bases) != 1:
+        raise ValueError(
+            "Formato inesperado do valor-base SHAP."
+        )
+
+    valor_base = float(bases[0])
 
     previsao_reconstruida = (
         valor_base + float(valores_shap.sum())
@@ -97,11 +114,9 @@ def explicar_previsao(dados, quantidade_atributos=10):
             "A explicação contém valores inválidos."
         )
 
-    if not np.isfinite(
-        valores_shap
-    ).all():
+    if not np.isfinite(valores_shap).all():
         raise ValueError(
-            "Foram encontrados valores SHAP inválidos."
+            "Contribuições SHAP inválidas."
         )
 
     if not np.isclose(
@@ -115,38 +130,39 @@ def explicar_previsao(dados, quantidade_atributos=10):
             "reconstruíram a previsão."
         )
 
-    contribuicoes = []
-
-    for atributo, valor in zip(
-        x.columns,
-        valores_shap
-    ):
-        contribuicoes.append({
-            "atributo": str(atributo),
+    contribuicoes = [
+        {
+            "atributo": str(coluna),
             "contribuicao": float(valor)
-        })
+        }
+        for coluna, valor in zip(
+            x.columns,
+            valores_shap
+        )
+    ]
 
     contribuicoes.sort(
-        key=lambda item: abs(
-            item["contribuicao"]
-        ),
+        key=lambda item: abs(item["contribuicao"]),
         reverse=True
     )
 
     return {
-        "algoritmo": "XGBoost",
-        "horizonte_dias": 7,
+        "algoritmo": artefato["algoritmo"],
+        "horizonte_dias": int(
+            artefato["horizonte_dias"]
+        ),
         "previsao": round(previsao, 2),
         "valor_base_shap": round(valor_base, 2),
         "previsao_reconstruida": round(
-            previsao_reconstruida, 2
+            previsao_reconstruida,
+            2
         ),
-        "diferenca_reconstrucao": diferenca,
+        "diferenca_reconstrucao": float(diferenca),
         "principais_contribuicoes": (
             contribuicoes[:quantidade_atributos]
         ),
         "observacao": (
-            "Contribuições SHAP explicam a "
+            "As contribuições SHAP explicam a "
             "previsão do modelo, não relações causais."
         )
     }
