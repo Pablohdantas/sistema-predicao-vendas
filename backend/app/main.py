@@ -8,6 +8,9 @@ from fastapi import FastAPI
 from backend.app.routers.previsoes import (
     router as previsoes_router
 )
+from backend.app.routers.previsoes_automaticas import (
+    router as previsoes_automaticas_router
+)
 from backend.app.routers.datasets import (
     router as datasets_router
 )
@@ -17,6 +20,9 @@ from backend.app.routers.treinamentos import (
 from backend.app.routers.avaliacoes import (
     router as avaliacoes_router
 )
+from backend.app.routers.historico import (
+    router as historico_router
+)
 
 
 app = FastAPI(
@@ -24,9 +30,10 @@ app = FastAPI(
     description=(
         "API para upload de datasets, treinamento AutoML "
         "com LightGBM e XGBoost, avaliação temporal, "
-        "previsão de vendas e explicabilidade SHAP."
+        "atualização do histórico de vendas, "
+        "previsões e explicabilidade SHAP."
     ),
-    version="1.2.0"
+    version="1.4.0"
 )
 
 
@@ -46,4 +53,6 @@ def verificar_saude():
 app.include_router(datasets_router)
 app.include_router(treinamentos_router)
 app.include_router(avaliacoes_router)
+app.include_router(historico_router)
+app.include_router(previsoes_automaticas_router)
 app.include_router(previsoes_router)
