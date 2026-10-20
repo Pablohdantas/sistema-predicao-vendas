@@ -2,19 +2,23 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ChangeEvent } from 'react'
 
+
 import {
   Activity,
   BarChart3,
   BrainCircuit,
+  CalendarDays,
   CheckCircle2,
   Clock3,
   CloudUpload,
+  Database,
   FileSpreadsheet,
   LoaderCircle,
   Play,
   RefreshCw,
   Store,
   TriangleAlert,
+  History,
 } from 'lucide-react'
 
 import {
@@ -42,6 +46,10 @@ import type {
 } from './services/api'
 
 import './App.css'
+
+import SeletorExecucao from './components/SeletorExecucao'
+import PrevisaoFutura from './components/PrevisaoFutura'
+import AtualizacaoHistorico from './components/AtualizacaoHistorico'
 
 const CHAVE_EXECUCAO = 'automl_execucao_atual'
 
@@ -80,6 +88,8 @@ function App() {
   const [carregandoResultados, setCarregandoResultados] = useState(false)
   const [mensagemErro, setMensagemErro] = useState('')
   const [mensagemSucesso, setMensagemSucesso] = useState('')
+
+  const [versaoHistorico, setVersaoHistorico] = useState(0)
 
   const atualizarStatus = useCallback(async (id: string) => {
     const resposta = await api.get<StatusTreinamento>(
@@ -295,6 +305,26 @@ function App() {
     interrompido: 'Interrompido',
   }
 
+  const selecionarExecucao = (id: string) => {
+    if (id === execucaoId) return
+
+    if (id) {
+      localStorage.setItem(CHAVE_EXECUCAO, id)
+    } else {
+      localStorage.removeItem(CHAVE_EXECUCAO)
+    }
+
+    setExecucaoId(id)
+    setArquivo(null)
+    setUpload(null)
+    setStatus(null)
+    setAvaliacao(null)
+    setPrevisoes([])
+    setLojaSelecionada('')
+    setMensagemErro('')
+    setMensagemSucesso('')
+  }
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -309,6 +339,18 @@ function App() {
         </div>
 
         <nav className="navigation" aria-label="Navegação principal">
+          <a href="#execucoes">
+            <Database size={19} />
+            Execuções
+          </a>
+          <a href="#previsao-futura">
+  <CalendarDays size={19} />
+  Previsões futuras
+</a>
+<a href="#atualizar-historico">
+  <History size={19} />
+  Atualizar vendas
+</a>
           <a href="#visao-geral">
             <BarChart3 size={19} />
             Visão geral
@@ -410,7 +452,10 @@ function App() {
             <span className="metric-hint">Teste temporal externo</span>
           </div>
         </section>
-
+        <SeletorExecucao
+          execucaoSelecionada={execucaoId}
+          onSelecionar={selecionarExecucao}
+        />
         <div className="section-grid">
           <section className="panel" id="dataset">
             <div className="panel-heading">
@@ -645,7 +690,26 @@ function App() {
             </div>
           )}
         </section>
-
+<PrevisaoFutura
+  key={`${execucaoId}-${versaoHistorico}`}
+  execucaoId={execucaoId}
+  lojas={lojasDisponiveis}
+  treinamentoConcluido={
+    status?.status === 'concluido' &&
+    status?.modo === 'treinamento_definitivo'
+  }
+/>
+<AtualizacaoHistorico
+  key={execucaoId}
+  execucaoId={execucaoId}
+  treinamentoConcluido={
+    status?.status === 'concluido' &&
+    status?.modo === 'treinamento_definitivo'
+  }
+  onHistoricoAtualizado={() => {
+    setVersaoHistorico((versao) => versao + 1)
+  }}
+/>
         <footer className="page-footer">
           Sistema de Predição de Vendas · AutoML + XAI · Protótipo acadêmico
           {estadosFinalizados.includes(status?.status ?? '') &&
