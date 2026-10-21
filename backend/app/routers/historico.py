@@ -1,36 +1,40 @@
 
 """
 Endpoints para atualização do histórico de vendas.
+
+Aceita execuções com modelo convencional ou semanal
+concluído, conforme validação realizada pelo serviço.
 """
 
 from fastapi import (
     APIRouter,
     File,
     HTTPException,
-    UploadFile
+    UploadFile,
 )
 
 from backend.app.services.atualizacao_historico_service import (
     TAMANHO_MAXIMO_ATUALIZACAO,
-    atualizar_historico
+    atualizar_historico,
 )
 
 
 router = APIRouter(
     prefix="/historico",
-    tags=["Histórico de vendas"]
+    tags=["Histórico de vendas"],
 )
 
 
 @router.post("/execucoes/{execucao_id}/atualizar")
 async def adicionar_vendas(
     execucao_id: str,
-    arquivo: UploadFile = File(...)
+    arquivo: UploadFile = File(...),
 ):
     """
-    Recebe um CSV com novas vendas.
+    Recebe novas vendas em formato CSV.
 
-    Não altera o modelo nem retreina o AutoML.
+    Preserva o modelo treinado e os resultados
+    da avaliação externa.
     """
 
     try:
@@ -41,19 +45,19 @@ async def adicionar_vendas(
         return atualizar_historico(
             execucao_id,
             conteudo,
-            arquivo.filename or ""
+            arquivo.filename or "",
         )
 
     except FileNotFoundError as erro:
         raise HTTPException(
             status_code=404,
-            detail=str(erro)
+            detail=str(erro),
         ) from erro
 
     except ValueError as erro:
         raise HTTPException(
             status_code=422,
-            detail=str(erro)
+            detail=str(erro),
         ) from erro
 
     finally:

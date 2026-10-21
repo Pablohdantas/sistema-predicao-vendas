@@ -2,15 +2,20 @@
 """
 Atualização do histórico de vendas de uma execução.
 
-Preserva dataset.csv, o modelo treinado e os resultados
-do teste externo.
+Aceita execuções com:
+- Modelo convencional definitivo concluído; ou
+- Modelo multihorizonte semanal concluído.
 
-As novas vendas são acrescentadas ao arquivo
-historico_atualizado.csv, sem retreinamento.
+Preserva dataset.csv, modelos treinados e resultados
+da avaliação externa.
+
+Acrescenta novas vendas em historico_atualizado.csv,
+sem retreinamento.
 """
 
 from io import BytesIO
 from pathlib import Path
+import json
 import os
 import threading
 
@@ -18,11 +23,11 @@ import pandas as pd
 
 from dados.scripts.template import (
     NOMES,
-    validar_template
+    validar_template,
 )
 from backend.app.services.treinamento_service import (
     consultar_treinamento,
-    pasta_da_execucao
+    pasta_da_execucao,
 )
 
 
@@ -39,6 +44,7 @@ def ler_historico(pasta: Path) -> pd.DataFrame:
     """
 
     atualizado = pasta / "historico_atualizado.csv"
+
     caminho = (
         atualizado
         if atualizado.is_file()
@@ -49,34 +55,101 @@ def ler_historico(pasta: Path) -> pd.DataFrame:
         caminho,
         dtype={
             "loja_id": "string",
-            "data": "string"
-        }
+            "data": "string",
+        },
+    )
+
+
+def possui_modelo_concluido(pasta: Path) -> bool:
+    """
+    Verifica se existe pelo menos um modelo utilizável.
+
+    Não considera treinamentos em andamento ou falhos
+    como concluídos apenas pela existência de arquivos.
+    """
+
+    # Modelo convencional.
+    status_convencional = consultar_treinamento(
+        pasta.name
+    )
+
+    modelo_convencional = (
+        pasta / "modelo_vencedor.joblib"
+    )
+
+    convencional_disponivel = (
+        status_convencional.get("status") == "concluido"
+        and status_convencional.get("modo")
+        == "treinamento_definitivo"
+        and modelo_convencional.is_file()
+    )
+
+    if convencional_disponivel:
+        return True
+
+    # Modelo semanal.
+    pasta_semanal = pasta / "multihorizonte"
+
+    modelo_semanal = (
+        pasta_semanal / "modelo_multihorizonte.joblib"
+    )
+
+    relatorio_semanal = (
+        pasta_semanal / "relatorio.json"
+    )
+
+    if (
+        not modelo_semanal.is_file()
+        or not relatorio_semanal.is_file()
+    ):
+        return False
+
+    caminho_status = (
+        pasta / "status_multihorizonte.json"
+    )
+
+    # Compatibilidade com os pilotos antigos, que
+    # foram treinados diretamente pelo terminal
+    # antes da criação da rota de treinamento.
+    if not caminho_status.is_file():
+        return True
+
+    try:
+        status_semanal = json.loads(
+            caminho_status.read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, ValueError) as erro:
+        raise ValueError(
+            "Não foi possível consultar o estado "
+            "do treinamento semanal."
+        ) from erro
+
+    return (
+        status_semanal.get("status") == "concluido"
     )
 
 
 def atualizar_historico(
     execucao_id: str,
     conteudo: bytes,
-    nome_arquivo: str
+    nome_arquivo: str,
 ) -> dict:
     """
-    Acrescenta novas vendas a lojas existentes.
+    Acrescenta vendas a lojas existentes.
 
-    Só aceita datas posteriores à última observação
-    de cada loja, para evitar alterações retroativas.
+    Aceita somente datas posteriores à última
+    observação armazenada de cada loja.
     """
 
     pasta = pasta_da_execucao(execucao_id)
 
-    status = consultar_treinamento(pasta.name)
-
-    if (
-        status.get("status") != "concluido"
-        or status.get("modo") != "treinamento_definitivo"
-    ):
+    if not possui_modelo_concluido(pasta):
         raise ValueError(
-            "O histórico só pode ser atualizado após "
-            "um treinamento definitivo concluído."
+            "É necessário concluir um treinamento "
+            "convencional ou semanal antes de "
+            "atualizar o histórico."
         )
 
     if not nome_arquivo.lower().endswith(".csv"):
@@ -99,14 +172,14 @@ def atualizar_historico(
             BytesIO(conteudo),
             dtype={
                 "loja_id": "string",
-                "data": "string"
+                "data": "string",
             },
-            encoding="utf-8-sig"
+            encoding="utf-8-sig",
         )
     except (
         UnicodeError,
         ValueError,
-        pd.errors.ParserError
+        pd.errors.ParserError,
     ) as erro:
         raise ValueError(
             f"Não foi possível ler a atualização: {erro}"
@@ -136,15 +209,18 @@ def atualizar_historico(
     with CONTROLE_ATUALIZACAO:
         historico = ler_historico(pasta)
 
-        # Mantém exatamente o esquema original.
+        # Mantém o esquema original.
         colunas_historico = historico.columns.tolist()
 
-        extras = set(novos.columns) - set(colunas_historico)
+        extras = (
+            set(novos.columns)
+            - set(colunas_historico)
+        )
 
         if extras:
             raise ValueError(
-                "A atualização contém colunas que não "
-                "existiam no dataset original: "
+                "A atualização contém colunas que "
+                "não existiam no dataset original: "
                 f"{sorted(extras)}"
             )
 
@@ -154,12 +230,10 @@ def atualizar_historico(
 
         novos = novos[colunas_historico].copy()
 
-        # Antes de acrescentar, validar os novos
-        # registros de forma independente.
         verificacao_novos = validar_template(
             novos,
             min_linhas=1,
-            min_dias=1
+            min_dias=1,
         )
 
         if not verificacao_novos.valido:
@@ -189,13 +263,13 @@ def atualizar_historico(
         datas_historico = pd.to_datetime(
             historico["data"],
             format="%Y-%m-%d",
-            errors="raise"
+            errors="raise",
         )
 
         datas_novas = pd.to_datetime(
             novos["data"],
             format="%Y-%m-%d",
-            errors="raise"
+            errors="raise",
         )
 
         ultimas_datas = (
@@ -207,7 +281,9 @@ def atualizar_historico(
         for loja_id, grupo in novos.assign(
             _data=datas_novas
         ).groupby("loja_id"):
-            ultima_data = ultimas_datas.loc[loja_id]
+            ultima_data = ultimas_datas.loc[
+                loja_id
+            ]
 
             if (grupo["_data"] <= ultima_data).any():
                 raise ValueError(
@@ -219,18 +295,17 @@ def atualizar_historico(
 
         combinado = pd.concat(
             [historico, novos],
-            ignore_index=True
+            ignore_index=True,
         )
 
         combinado = combinado.sort_values(
             ["loja_id", "data"]
         ).reset_index(drop=True)
 
-        # Revalida o histórico completo.
         validacao_final = validar_template(
             combinado,
             min_linhas=90,
-            min_dias=90
+            min_dias=90,
         )
 
         if not validacao_final.valido:
@@ -240,18 +315,24 @@ def atualizar_historico(
             )
 
         destino = pasta / "historico_atualizado.csv"
-        temporario = pasta / ".historico_atualizado.tmp"
+        temporario = (
+            pasta / ".historico_atualizado.tmp"
+        )
 
         try:
             combinado.to_csv(
                 temporario,
-                index=False
+                index=False,
             )
 
-            os.replace(temporario, destino)
-
+            os.replace(
+                temporario,
+                destino,
+            )
         finally:
-            temporario.unlink(missing_ok=True)
+            temporario.unlink(
+                missing_ok=True
+            )
 
         ultimas = (
             combinado.groupby("loja_id")["data"]
@@ -262,12 +343,16 @@ def atualizar_historico(
         return {
             "execucao_id": pasta.name,
             "status": "historico_atualizado",
-            "registros_adicionados": int(len(novos)),
-            "registros_totais": int(len(combinado)),
+            "registros_adicionados": int(
+                len(novos)
+            ),
+            "registros_totais": int(
+                len(combinado)
+            ),
             "quantidade_lojas": int(
                 combinado["loja_id"].nunique()
             ),
             "ultimas_datas_por_loja": ultimas,
             "modelo_retreinado": False,
-            "avaliacao_externa_preservada": True
+            "avaliacao_externa_preservada": True,
         }
