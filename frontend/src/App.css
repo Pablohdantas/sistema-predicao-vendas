@@ -1080,3 +1080,145 @@ h1 {
     text-align: center;
   }
 }
+
+
+.template-informacao {
+  margin: 12px 0 0;
+  color: #82919f;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.template-informacao strong {
+  color: #405667;
+  font-weight: 700;
+}
+
+.guia-template {
+  margin-top: 17px;
+  padding-top: 17px;
+  border-top: 1px solid #e3ecef;
+}
+
+.guia-template-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #21836a;
+}
+
+.guia-template-intro strong {
+  font-size: 13px;
+  color: #334c5b;
+}
+
+.guia-template-intro p {
+  color: #81909e;
+  font-size: 12px;
+  margin: 5px 0 0;
+  line-height: 1.6;
+}
+
+.guia-template-acoes {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.guia-template-acoes .secondary-button {
+  flex: 1;
+  min-width: 150px;
+}
+
+.guia-template-expandir {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin-top: 15px;
+  padding: 12px;
+  border: 1px solid #dce6ec;
+  border-radius: 9px;
+  background: white;
+  color: #276b60;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.guia-template-tabela-wrapper {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+
+.guia-template-tabela {
+  width: 100%;
+  min-width: 510px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.guia-template-tabela th,
+.guia-template-tabela td {
+  padding: 11px;
+  border-bottom: 1px solid #e5ebef;
+  text-align: left;
+  vertical-align: top;
+}
+
+.guia-template-tabela th {
+  color: #637688;
+  background: #f5f9fa;
+}
+
+.guia-template-tabela td {
+  color: #516779;
+}
+
+.guia-template-tabela code {
+  color: #207b64;
+  overflow-wrap: anywhere;
+}
+/* Controles da configuracao AutoML */
+.automl-config {
+  margin: 16px 0;
+  padding: 15px;
+  border: 1px solid #dce7e9;
+  border-radius: 11px;
+  background: #f7fafb;
+}
+.automl-config-label,
+.automl-config-campos label {
+  display: block;
+  margin-bottom: 8px;
+  color: #344c5e;
+  font-size: 12px;
+  font-weight: 650;
+}
+.automl-config select,
+.automl-config input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 39px;
+  padding: 8px 10px;
+  border: 1px solid #d5e0e5;
+  border-radius: 8px;
+  background: #fff;
+  color: #233f50;
+  font: inherit;
+  font-size: 13px;
+}
+.automl-config-campos {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.automl-config-campos input { margin-top: 7px; }
+.automl-config-aviso {
+  margin: 11px 0 0;
+  font-size: 12px;
+  line-height: 1.65;
+  color: #637a88;
+}
+.automl-config-erro { color: #b42318; font-size: 12px; }
