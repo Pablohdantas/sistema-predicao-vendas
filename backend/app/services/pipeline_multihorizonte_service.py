@@ -1,21 +1,21 @@
 
 """
-Pipeline experimental multihorizonte (dias 1 a 7).
+Pipeline AutoML multihorizonte: previsão dos dias 1 a 7.
 
-Executa:
-1. Engenharia de atributos por loja.
-2. Separação temporal externa.
-3. Competição LightGBM × XGBoost.
-4. Seleção por validação temporal.
-5. Treinamento final.
-6. Avaliação externa por horizonte.
-7. Previsões futuras e total semanal.
-8. Persistência independente dos modelos antigos.
+- Engenharia de atributos sem vendas futuras.
+- Divisão temporal externa.
+- Validação temporal expansiva.
+- Otimização com FLAML Tune.
+- Competição LightGBM x XGBoost.
+- Seleção pelo menor RMSE de validação.
+- Avaliação externa por horizonte.
+- Previsão semanal por loja.
+- Persistência independente do modelo convencional.
 
-Esta versão compara configurações fixas.
-A otimização FLAML será integrada posteriormente.
+O teste externo não participa da otimização.
 """
 
+import gc
 import json
 import time
 from pathlib import Path
@@ -23,6 +23,8 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+
+from flaml import tune
 
 from backend.app.services.atributos_multihorizonte_service import (
     gerar_exemplos_treinamento_loja,
@@ -39,10 +41,25 @@ from backend.app.services.preprocessamento_service import (
     transformar_atributos,
 )
 from backend.app.services.automl_service import criar_modelo
-from backend.app.services.treinamento_service import pasta_da_execucao
+from backend.app.services.treinamento_service import (
+    pasta_da_execucao,
+)
 
 
-CONFIGURACOES = {
+SEMENTE = 42
+HORIZONTES = list(range(1, 8))
+
+# Valores conservadores para o primeiro uso no notebook.
+TENTATIVAS_POR_ALGORITMO = 3
+TEMPO_POR_ALGORITMO = 30
+
+# Limite de segurança desta etapa.
+# Para bases grandes, será necessário processamento
+# em lotes, sem expandir todas as linhas em memória.
+LIMITE_LINHAS_PILOTO = 5000
+
+
+CONFIGURACOES_INICIAIS = {
     "lgbm": {
         "n_estimators": 120,
         "learning_rate": 0.05,
@@ -62,8 +79,15 @@ CONFIGURACOES = {
 
 
 def metricas(y_real, y_previsto):
-    real = np.asarray(y_real, dtype=float)
-    previsto = np.asarray(y_previsto, dtype=float)
+    real = np.asarray(
+        y_real,
+        dtype=float,
+    ).reshape(-1)
+
+    previsto = np.asarray(
+        y_previsto,
+        dtype=float,
+    ).reshape(-1)
 
     if (
         real.size == 0
@@ -71,136 +95,416 @@ def metricas(y_real, y_previsto):
         or not np.isfinite(real).all()
         or not np.isfinite(previsto).all()
     ):
-        raise ValueError("Valores inválidos nas métricas.")
+        raise ValueError(
+            "Valores inválidos no cálculo das métricas."
+        )
 
     erros = real - previsto
 
     return {
-        "rmse": round(
-            float(np.sqrt(np.mean(erros ** 2))), 4
+        "rmse": float(
+            np.sqrt(np.mean(np.square(erros)))
         ),
-        "mae": round(
-            float(np.mean(np.abs(erros))), 4
+        "mae": float(
+            np.mean(np.abs(erros))
         ),
         "quantidade": int(len(real)),
     }
 
 
+def normalizar_configuracao(algoritmo, configuracao):
+    """
+    Normaliza valores da busca para tipos aceitos
+    pelos modelos e pelo formato JSON.
+    """
+
+    resultado = {
+        "n_estimators": int(
+            configuracao["n_estimators"]
+        ),
+        "learning_rate": float(
+            configuracao["learning_rate"]
+        ),
+        "max_depth": int(
+            configuracao["max_depth"]
+        ),
+        "subsample": float(
+            configuracao["subsample"]
+        ),
+        "colsample_bytree": float(
+            configuracao["colsample_bytree"]
+        ),
+    }
+
+    if algoritmo == "lgbm":
+        resultado["num_leaves"] = int(
+            configuracao["num_leaves"]
+        )
+
+    return resultado
+
+
+def espaco_busca(algoritmo):
+    """
+    Espaço de hiperparâmetros do FLAML.
+
+    Num_samples e time_budget_s limitam a busca
+    para reduzir o consumo de recursos.
+    """
+
+    espaco = {
+        "n_estimators": tune.randint(60, 241),
+        "learning_rate": tune.loguniform(
+            0.015,
+            0.20,
+        ),
+        "max_depth": tune.randint(3, 9),
+        "subsample": tune.uniform(0.75, 1.0),
+        "colsample_bytree": tune.uniform(
+            0.75,
+            1.0,
+        ),
+    }
+
+    if algoritmo == "lgbm":
+        espaco["num_leaves"] = tune.randint(8, 64)
+
+    return espaco
+
+
 def preparar_exemplos(dados):
+    """
+    Constrói exemplos dos sete horizontes para
+    todas as lojas do dataset.
+    """
+
     partes = []
 
-    for loja_id in dados["loja_id"].dropna().unique():
+    for identificador in dados["loja_id"].dropna().unique():
         parte = gerar_exemplos_treinamento_loja(
             dados,
-            int(loja_id),
+            int(identificador),
         )
+
         partes.append(parte)
 
     if not partes:
-        raise ValueError("Nenhuma loja encontrada.")
+        raise ValueError(
+            "Nenhuma loja válida encontrada."
+        )
 
-    return pd.concat(
+    resultado = pd.concat(
         partes,
         ignore_index=True,
     )
 
+    del partes
+    gc.collect()
 
-def competir_modelos(treino_externo, divisoes):
-    resultados = {}
+    if resultado.empty:
+        raise ValueError(
+            "Nenhum exemplo de treinamento disponível."
+        )
 
-    for algoritmo, configuracao in CONFIGURACOES.items():
-        print(f"\nAvaliando {algoritmo}...", flush=True)
+    return resultado
 
-        reais = []
-        previstas = []
-        relatorios = []
 
-        for numero, (idx_treino, idx_validacao) in enumerate(
-            divisoes,
-            start=1,
+def avaliar_configuracao(
+    algoritmo,
+    configuracao,
+    treino_externo,
+    divisoes,
+):
+    """
+    Avalia a mesma configuração em todas as dobras.
+
+    Para cada dobra:
+    - Ajusta o pré-processamento somente no treino.
+    - Treina o modelo.
+    - Prevê sobre a validação.
+    - Acumula erros para calcular RMSE agregado.
+    """
+
+    configuracao = normalizar_configuracao(
+        algoritmo,
+        configuracao,
+    )
+
+    soma_quadrados = 0.0
+    soma_absolutos = 0.0
+    total = 0
+
+    relatorios = []
+
+    for numero, (idx_treino, idx_validacao) in enumerate(
+        divisoes,
+        start=1,
+    ):
+        treino = treino_externo.iloc[idx_treino]
+        validacao = treino_externo.iloc[idx_validacao]
+
+        if (
+            treino["data"].max()
+            > validacao["data_origem"].min()
         ):
-            treino = treino_externo.iloc[idx_treino]
-            validacao = treino_externo.iloc[idx_validacao]
-
-            esquema = ajustar_preprocessamento(treino)
-
-            x_treino = transformar_atributos(
-                treino,
-                esquema,
-            )
-            x_validacao = transformar_atributos(
-                validacao,
-                esquema,
+            raise ValueError(
+                f"Vazamento temporal na dobra {numero}."
             )
 
-            modelo = criar_modelo(
-                algoritmo,
-                configuracao,
+        esquema = ajustar_preprocessamento(treino)
+
+        x_treino = transformar_atributos(
+            treino,
+            esquema,
+        )
+
+        x_validacao = transformar_atributos(
+            validacao,
+            esquema,
+        )
+
+        y_treino = treino["vendas"].to_numpy(
+            dtype=float
+        )
+
+        y_validacao = validacao["vendas"].to_numpy(
+            dtype=float
+        )
+
+        modelo = criar_modelo(
+            algoritmo,
+            configuracao,
+        )
+
+        modelo.fit(
+            x_treino,
+            y_treino,
+        )
+
+        previsoes = np.asarray(
+            modelo.predict(x_validacao),
+            dtype=float,
+        )
+
+        if not np.isfinite(previsoes).all():
+            raise ValueError(
+                "O modelo retornou previsões inválidas."
             )
 
-            modelo.fit(
-                x_treino,
-                treino["vendas"].to_numpy(dtype=float),
-            )
+        previsoes = np.maximum(
+            previsoes,
+            0,
+        )
 
-            # Vendas previstas não devem ser negativas.
-            predicoes = np.maximum(
-                0,
-                np.asarray(
-                    modelo.predict(x_validacao),
-                    dtype=float,
-                ),
-            )
+        erros = y_validacao - previsoes
 
-            y_real = validacao["vendas"].to_numpy(
-                dtype=float
-            )
+        soma_quadrados += float(
+            np.sum(np.square(erros))
+        )
 
-            reais.extend(y_real.tolist())
-            previstas.extend(predicoes.tolist())
+        soma_absolutos += float(
+            np.sum(np.abs(erros))
+        )
 
-            resultado_dobra = metricas(y_real, predicoes)
+        total += len(erros)
 
-            relatorios.append({
-                "dobra": numero,
-                **resultado_dobra,
-            })
+        relatorios.append({
+            "dobra": numero,
+            **metricas(y_validacao, previsoes),
+        })
 
-            print(
-                f"  Dobra {numero}: "
-                f"RMSE={resultado_dobra['rmse']:.2f}",
-                flush=True,
-            )
+        del (
+            modelo,
+            x_treino,
+            x_validacao,
+            y_treino,
+            y_validacao,
+            previsoes,
+            erros,
+        )
 
-        resultados[algoritmo] = {
-            **metricas(reais, previstas),
-            "dobras": relatorios,
+        gc.collect()
+
+    if total <= 0:
+        raise ValueError(
+            "Nenhuma previsão gerada nas dobras."
+        )
+
+    return {
+        "rmse": float(
+            np.sqrt(soma_quadrados / total)
+        ),
+        "mae": float(
+            soma_absolutos / total
+        ),
+        "quantidade": total,
+        "dobras": relatorios,
+    }
+
+
+def otimizar_algoritmo(
+    algoritmo,
+    treino_externo,
+    divisoes,
+    tentativas,
+    tempo_por_algoritmo,
+):
+    """
+    Executa busca FLAML e mantém a melhor configuração
+    avaliada durante a competição.
+    """
+
+    print(
+        f"\nOtimizando {algoritmo} com FLAML...",
+        flush=True,
+    )
+
+    melhor_configuracao = normalizar_configuracao(
+        algoritmo,
+        CONFIGURACOES_INICIAIS[algoritmo],
+    )
+
+    melhor_resultado = avaliar_configuracao(
+        algoritmo,
+        melhor_configuracao,
+        treino_externo,
+        divisoes,
+    )
+
+    avaliacoes = [{
+        "origem": "configuracao_inicial",
+        "configuracao": melhor_configuracao,
+        "rmse": melhor_resultado["rmse"],
+        "mae": melhor_resultado["mae"],
+    }]
+
+    print(
+        "  Configuração inicial: "
+        f"RMSE={melhor_resultado['rmse']:.2f}",
+        flush=True,
+    )
+
+    def objetivo(configuracao):
+        nonlocal melhor_configuracao
+        nonlocal melhor_resultado
+
+        candidata = normalizar_configuracao(
+            algoritmo,
+            configuracao,
+        )
+
+        resultado = avaliar_configuracao(
+            algoritmo,
+            candidata,
+            treino_externo,
+            divisoes,
+        )
+
+        avaliacoes.append({
+            "origem": "flaml",
+            "configuracao": candidata,
+            "rmse": resultado["rmse"],
+            "mae": resultado["mae"],
+        })
+
+        if resultado["rmse"] < melhor_resultado["rmse"]:
+            melhor_resultado = resultado
+            melhor_configuracao = candidata
+
+        return {
+            "rmse": resultado["rmse"],
         }
 
-        print(
-            f"  RMSE agregado: "
-            f"{resultados[algoritmo]['rmse']:.2f}",
-            flush=True,
+    # Cada algoritmo recebe o mesmo número máximo
+    # de tentativas e orçamento de tempo.
+    tune.run(
+        objetivo,
+        config=espaco_busca(algoritmo),
+        metric="rmse",
+        mode="min",
+        num_samples=tentativas,
+        time_budget_s=tempo_por_algoritmo,
+        low_cost_partial_config=(
+            CONFIGURACOES_INICIAIS[algoritmo]
+        ),
+        use_ray=False,
+        verbose=0,
+    )
+
+    print(
+        f"  Melhor RMSE: {melhor_resultado['rmse']:.2f}",
+        flush=True,
+    )
+
+    return {
+        "algoritmo": algoritmo,
+        "configuracao": melhor_configuracao,
+        "resultado": melhor_resultado,
+        "tentativas_avaliadas": len(avaliacoes),
+        "avaliacoes": avaliacoes,
+    }
+
+
+def competir_modelos(
+    treino_externo,
+    divisoes,
+    tentativas,
+    tempo_por_algoritmo,
+):
+    """
+    Otimiza ambos os algoritmos e seleciona o
+    menor RMSE de validação temporal.
+    """
+
+    resultados = {}
+
+    for algoritmo in ("lgbm", "xgboost"):
+        resultados[algoritmo] = otimizar_algoritmo(
+            algoritmo,
+            treino_externo,
+            divisoes,
+            tentativas,
+            tempo_por_algoritmo,
         )
 
     vencedor = min(
         resultados,
-        key=lambda nome: resultados[nome]["rmse"],
+        key=lambda nome: (
+            resultados[nome]["resultado"]["rmse"]
+        ),
     )
 
     return vencedor, resultados
 
 
-def avaliar_externamente(modelo, esquema, teste):
-    x_teste = transformar_atributos(teste, esquema)
+def avaliar_externamente(
+    modelo,
+    esquema,
+    teste,
+):
+    """
+    Avalia o vencedor no teste externo reservado.
 
-    predicoes = np.maximum(
-        0,
-        np.asarray(
-            modelo.predict(x_teste),
-            dtype=float,
-        ),
+    Calcula métricas agregadas e separadas
+    para os horizontes de 1 a 7.
+    """
+
+    x_teste = transformar_atributos(
+        teste,
+        esquema,
     )
+
+    previsoes = np.asarray(
+        modelo.predict(x_teste),
+        dtype=float,
+    )
+
+    if not np.isfinite(previsoes).all():
+        raise ValueError(
+            "Previsões externas inválidas."
+        )
+
+    previsoes = np.maximum(previsoes, 0)
 
     resultado = teste[
         [
@@ -212,11 +516,16 @@ def avaliar_externamente(modelo, esquema, teste):
         ]
     ].copy()
 
-    resultado["vendas_previstas"] = predicoes
+    resultado["vendas_previstas"] = previsoes
+
+    agregado = metricas(
+        resultado["vendas"],
+        resultado["vendas_previstas"],
+    )
 
     por_horizonte = {}
 
-    for horizonte in range(1, 8):
+    for horizonte in HORIZONTES:
         grupo = resultado.loc[
             resultado["horizonte_dias"] == horizonte
         ]
@@ -226,21 +535,31 @@ def avaliar_externamente(modelo, esquema, teste):
             grupo["vendas_previstas"],
         )
 
-    agregado = metricas(
-        resultado["vendas"],
-        resultado["vendas_previstas"],
+    return (
+        resultado,
+        agregado,
+        por_horizonte,
     )
 
-    return resultado, agregado, por_horizonte
 
+def gerar_previsoes_semanais(
+    dados,
+    modelo,
+    esquema,
+):
+    """
+    Produz sete estimativas por loja a partir
+    do último registro histórico observado.
+    """
 
-def gerar_previsoes_semanais(dados, modelo, esquema):
     resultados = []
 
-    for loja_id in dados["loja_id"].dropna().unique():
+    for identificador in dados["loja_id"].dropna().unique():
+        loja_id = int(identificador)
+
         futuras = gerar_entradas_futuras_loja(
             dados,
-            int(loja_id),
+            loja_id,
         )
 
         x_futuro = transformar_atributos(
@@ -248,13 +567,20 @@ def gerar_previsoes_semanais(dados, modelo, esquema):
             esquema,
         )
 
-        predicoes = np.maximum(
-            0,
-            np.asarray(
-                modelo.predict(x_futuro),
-                dtype=float,
-            ),
+        valores = np.asarray(
+            modelo.predict(x_futuro),
+            dtype=float,
         )
+
+        if (
+            len(valores) != 7
+            or not np.isfinite(valores).all()
+        ):
+            raise ValueError(
+                f"Previsões inválidas para loja {loja_id}."
+            )
+
+        valores = np.maximum(valores, 0)
 
         previsoes = []
 
@@ -269,16 +595,18 @@ def gerar_previsoes_semanais(dados, modelo, esquema):
                     "%Y-%m-%d"
                 ),
                 "vendas_previstas": round(
-                    float(predicoes[indice]),
+                    float(valores[indice]),
                     2,
                 ),
             })
 
         resultados.append({
-            "loja_id": int(loja_id),
-            "data_origem": futuras[
-                "data_origem"
-            ].iloc[0].strftime("%Y-%m-%d"),
+            "loja_id": loja_id,
+            "data_origem": (
+                futuras["data_origem"]
+                .iloc[0]
+                .strftime("%Y-%m-%d")
+            ),
             "previsoes": previsoes,
             "total_semanal_previsto": round(
                 sum(
@@ -292,8 +620,30 @@ def gerar_previsoes_semanais(dados, modelo, esquema):
     return resultados
 
 
-def executar_pipeline_multihorizonte(execucao_id):
+def executar_pipeline_multihorizonte(
+    execucao_id,
+    tentativas=TENTATIVAS_POR_ALGORITMO,
+    tempo_por_algoritmo=TEMPO_POR_ALGORITMO,
+):
+    """
+    Executa o AutoML semanal completo.
+
+    O modelo convencional da execução permanece
+    preservado. O teste externo só é avaliado
+    depois da escolha dos hiperparâmetros.
+    """
+
     inicio = time.perf_counter()
+
+    if not 1 <= tentativas <= 30:
+        raise ValueError(
+            "Tentativas devem estar entre 1 e 30."
+        )
+
+    if not 1 <= tempo_por_algoritmo <= 1800:
+        raise ValueError(
+            "Tempo deve estar entre 1 e 1800 segundos."
+        )
 
     pasta = pasta_da_execucao(execucao_id)
 
@@ -301,22 +651,32 @@ def executar_pipeline_multihorizonte(execucao_id):
 
     if destino.exists():
         raise FileExistsError(
-            "Esta execução já possui resultados "
-            "multihorizonte. Não serão sobrescritos."
+            "O modelo multihorizonte já existe. "
+            "Os arquivos não serão sobrescritos."
         )
 
-    print("\nCarregando histórico...", flush=True)
+    print(
+        "\n=== AUTOML MULTIHORIZONTE ===",
+        flush=True,
+    )
 
-    # Inicialmente usamos o dataset original,
-    # para manter comparação reproduzível.
     dados = pd.read_csv(
         pasta / "dataset.csv",
         dtype={"loja_id": "string"},
     )
 
+    if len(dados) > LIMITE_LINHAS_PILOTO:
+        raise ValueError(
+            "O treinamento multihorizonte aceita "
+            f"até {LIMITE_LINHAS_PILOTO} registros "
+            "nesta etapa. O suporte a bases maiores "
+            "exige processamento em lotes."
+        )
+
     dados["data"] = pd.to_datetime(
         dados["data"],
         format="%Y-%m-%d",
+        errors="raise",
     )
 
     dados["vendas"] = pd.to_numeric(
@@ -324,31 +684,35 @@ def executar_pipeline_multihorizonte(execucao_id):
         errors="raise",
     )
 
-    if dados["vendas"].isna().any():
-        raise ValueError("Existem vendas inválidas.")
-
-    # Limite provisório para proteger a memória
-    # durante a validação inicial do pipeline.
-    if len(dados) > 5000:
+    if (
+        dados["vendas"].isna().any()
+        or not np.isfinite(dados["vendas"]).all()
+    ):
         raise ValueError(
-            "Este piloto aceita no máximo 5.000 linhas. "
-            "O processamento em lotes virá depois."
+            "O dataset possui vendas inválidas."
         )
 
     print(
-        f"Dataset: {len(dados)} linhas, "
-        f"{dados['loja_id'].nunique()} lojas",
+        f"Registros: {len(dados)} | "
+        f"Lojas: {dados['loja_id'].nunique()}",
         flush=True,
     )
 
     exemplos = preparar_exemplos(dados)
 
     treino, teste, relatorio_divisao = (
-        dividir_dataset_multihorizonte(exemplos)
+        dividir_dataset_multihorizonte(
+            exemplos
+        )
     )
 
+    del exemplos
+    gc.collect()
+
     divisoes, relatorio_dobras = (
-        criar_dobras_multihorizonte(treino)
+        criar_dobras_multihorizonte(
+            treino
+        )
     )
 
     print(
@@ -361,16 +725,24 @@ def executar_pipeline_multihorizonte(execucao_id):
     vencedor, selecao = competir_modelos(
         treino,
         divisoes,
+        tentativas,
+        tempo_por_algoritmo,
     )
 
+    configuracao_vencedora = selecao[
+        vencedor
+    ]["configuracao"]
+
     print(
-        f"\nVencedor: {vencedor}",
+        f"\nVencedor: {vencedor.upper()}",
         flush=True,
     )
 
-    # Preprocessamento final ajustado SOMENTE
-    # sobre os dados de treinamento externo.
-    esquema_final = ajustar_preprocessamento(treino)
+    # Treina o vencedor somente nos exemplos
+    # anteriores ao período de teste externo.
+    esquema_final = ajustar_preprocessamento(
+        treino
+    )
 
     x_treino = transformar_atributos(
         treino,
@@ -379,13 +751,16 @@ def executar_pipeline_multihorizonte(execucao_id):
 
     modelo_final = criar_modelo(
         vencedor,
-        CONFIGURACOES[vencedor],
+        configuracao_vencedora,
     )
 
     modelo_final.fit(
         x_treino,
         treino["vendas"].to_numpy(dtype=float),
     )
+
+    del x_treino
+    gc.collect()
 
     previsoes_teste, agregado, por_horizonte = (
         avaliar_externamente(
@@ -395,6 +770,10 @@ def executar_pipeline_multihorizonte(execucao_id):
         )
     )
 
+    # Gera previsões futuras usando o modelo salvo
+    # com o histórico original desta execução.
+    # Na API, previsões posteriores usam o histórico
+    # atualizado, sem retreinamento.
     previsoes_futuras = gerar_previsoes_semanais(
         dados,
         modelo_final,
@@ -402,11 +781,13 @@ def executar_pipeline_multihorizonte(execucao_id):
     )
 
     relatorio = {
-        "tipo": "piloto_multihorizonte",
-        "horizontes": list(range(1, 8)),
-        "otimizacao_flaml": False,
+        "tipo": "automl_multihorizonte",
+        "horizontes": HORIZONTES,
+        "otimizacao_flaml": True,
         "algoritmo_vencedor": vencedor,
-        "configuracao": CONFIGURACOES[vencedor],
+        "configuracao": configuracao_vencedora,
+        "tentativas_por_algoritmo": tentativas,
+        "tempo_por_algoritmo": tempo_por_algoritmo,
         "selecao_temporal": selecao,
         "divisao_externa": relatorio_divisao,
         "validacao_interna": relatorio_dobras,
@@ -420,16 +801,23 @@ def executar_pipeline_multihorizonte(execucao_id):
         ),
     }
 
-    destino.mkdir(parents=True, exist_ok=False)
+    # Mantém o mesmo tipo de artefato que o
+    # endpoint de previsão semanal já conhece.
+    artefato = {
+        "algoritmo": vencedor,
+        "modelo": modelo_final,
+        "preprocessamento": esquema_final,
+        "horizontes": HORIZONTES,
+        "tipo": "multihorizonte",
+    }
+
+    destino.mkdir(
+        parents=True,
+        exist_ok=False,
+    )
 
     joblib.dump(
-        {
-            "algoritmo": vencedor,
-            "modelo": modelo_final,
-            "preprocessamento": esquema_final,
-            "horizontes": list(range(1, 8)),
-            "tipo": "multihorizonte",
-        },
+        artefato,
         destino / "modelo_multihorizonte.joblib",
     )
 
@@ -456,13 +844,14 @@ def executar_pipeline_multihorizonte(execucao_id):
         encoding="utf-8",
     )
 
-    print("\nAVALIAÇÃO EXTERNA", flush=True)
     print(
-        f"RMSE agregado: {agregado['rmse']:.2f}",
+        "\n=== AVALIAÇÃO EXTERNA ===",
         flush=True,
     )
+
     print(
-        f"MAE agregado: {agregado['mae']:.2f}",
+        f"RMSE: {agregado['rmse']:.2f} | "
+        f"MAE: {agregado['mae']:.2f}",
         flush=True,
     )
 
@@ -474,24 +863,15 @@ def executar_pipeline_multihorizonte(execucao_id):
             flush=True,
         )
 
-    print("\nPREVISÕES FUTURAS", flush=True)
+    print(
+        "\n=== PREVISÕES SEMANAIS ===",
+        flush=True,
+    )
 
     for loja in previsoes_futuras:
         print(
-            f"\nLoja {loja['loja_id']}",
-            flush=True,
-        )
-
-        for previsao in loja["previsoes"]:
-            print(
-                f"  {previsao['data']}: "
-                f"{previsao['vendas_previstas']:.2f}",
-                flush=True,
-            )
-
-        print(
-            "  TOTAL SEMANAL: "
-            f"{loja['total_semanal_previsto']:.2f}",
+            f"Loja {loja['loja_id']}: "
+            f"total={loja['total_semanal_previsto']:.2f}",
             flush=True,
         )
 

@@ -1,16 +1,21 @@
 
 """
-API de previsão semanal (horizontes 1 a 7).
+Rotas de previsão semanal e explicabilidade SHAP.
 
-Carrega o modelo multihorizonte já treinado e
-utiliza o histórico mais recente da loja.
+POST /{execucao_id}/lojas/{loja_id}/semanal
+    Retorna as sete previsões diárias.
 
-Não modifica o modelo, o dataset original nem
-os resultados da avaliação externa.
+POST /{execucao_id}/lojas/{loja_id}/semanal/explicacao/{dia}
+    Explica uma previsão escolhida, com SHAP.
+
+Preserva os modelos e os resultados anteriores.
 """
+
+from functools import lru_cache
 
 import joblib
 import numpy as np
+import shap
 
 from fastapi import APIRouter, HTTPException, Path
 
@@ -34,75 +39,133 @@ router = APIRouter(
 )
 
 
+@lru_cache(maxsize=3)
+def carregar_modelo_semanal(execucao_id: str):
+    """
+    Carrega um modelo semanal produzido pelo próprio
+    sistema. Cada execução tem artefato imutável.
+
+    Nunca carregue arquivos joblib de fontes externas
+    não confiáveis.
+    """
+
+    pasta = pasta_da_execucao(execucao_id)
+
+    caminho = (
+        pasta
+        / "multihorizonte"
+        / "modelo_multihorizonte.joblib"
+    )
+
+    if not caminho.is_file():
+        raise FileNotFoundError(
+            "Esta execução não possui modelo "
+            "semanal treinado."
+        )
+
+    artefato = joblib.load(caminho)
+
+    if not isinstance(artefato, dict):
+        raise ValueError(
+            "Artefato semanal inválido."
+        )
+
+    obrigatorios = {
+        "tipo",
+        "horizontes",
+        "algoritmo",
+        "modelo",
+        "preprocessamento",
+    }
+
+    if not obrigatorios.issubset(artefato):
+        raise ValueError(
+            "O modelo semanal está incompleto."
+        )
+
+    if (
+        artefato["tipo"] != "multihorizonte"
+        or artefato["horizontes"] != list(range(1, 8))
+        or artefato["algoritmo"] not in ("lgbm", "xgboost")
+    ):
+        raise ValueError(
+            "Artefato semanal incompatível."
+        )
+
+    return artefato
+
+
+def preparar_previsoes(execucao_id: str, loja_id: int):
+    """
+    Reconstrói atributos com o histórico atualizado.
+
+    Nenhuma venda futura é fornecida ao modelo.
+    """
+
+    pasta = pasta_da_execucao(execucao_id)
+
+    artefato = carregar_modelo_semanal(pasta.name)
+
+    historico = ler_historico(pasta)
+
+    entradas = gerar_entradas_futuras_loja(
+        historico,
+        loja_id,
+    )
+
+    x = transformar_atributos(
+        entradas,
+        artefato["preprocessamento"],
+    )
+
+    if len(x) != 7:
+        raise ValueError(
+            "Foram geradas menos de sete entradas."
+        )
+
+    valores_brutos = np.asarray(
+        artefato["modelo"].predict(x),
+        dtype=float,
+    ).reshape(-1)
+
+    if (
+        len(valores_brutos) != 7
+        or not np.isfinite(valores_brutos).all()
+    ):
+        raise ValueError(
+            "O modelo retornou previsões inválidas."
+        )
+
+    valores = np.maximum(valores_brutos, 0)
+
+    return artefato, entradas, x, valores_brutos, valores
+
+
+def traduzir_erro(erro: Exception):
+    if isinstance(erro, (FileNotFoundError, LookupError)):
+        raise HTTPException(
+            status_code=404,
+            detail=str(erro),
+        ) from erro
+
+    if isinstance(erro, (ValueError, KeyError, TypeError)):
+        raise HTTPException(
+            status_code=422,
+            detail=str(erro),
+        ) from erro
+
+    raise erro
+
+
 @router.post("/{execucao_id}/lojas/{loja_id}/semanal")
 def criar_previsao_semanal(
     execucao_id: str,
     loja_id: int = Path(gt=0),
 ):
-    """
-    Prevê individualmente os próximos sete dias
-    usando o modelo multihorizonte da execução.
-    """
-
     try:
-        pasta = pasta_da_execucao(execucao_id)
-
-        caminho_modelo = (
-            pasta
-            / "multihorizonte"
-            / "modelo_multihorizonte.joblib"
+        artefato, entradas, _, _, valores = (
+            preparar_previsoes(execucao_id, loja_id)
         )
-
-        if not caminho_modelo.is_file():
-            raise FileNotFoundError(
-                "Esta execução ainda não possui um "
-                "modelo semanal treinado."
-            )
-
-        # O artefato é produzido localmente pelo
-        # pipeline do próprio sistema. Arquivos
-        # joblib de origem desconhecida não são seguros.
-        artefato = joblib.load(caminho_modelo)
-
-        if (
-            artefato.get("tipo") != "multihorizonte"
-            or artefato.get("horizontes") != list(range(1, 8))
-        ):
-            raise ValueError(
-                "O artefato não corresponde ao modelo "
-                "multihorizonte esperado."
-            )
-
-        modelo = artefato["modelo"]
-        preprocessamento = artefato["preprocessamento"]
-
-        historico = ler_historico(pasta)
-
-        entradas = gerar_entradas_futuras_loja(
-            historico,
-            loja_id,
-        )
-
-        x_futuro = transformar_atributos(
-            entradas,
-            preprocessamento,
-        )
-
-        valores = np.asarray(
-            modelo.predict(x_futuro),
-            dtype=float,
-        ).reshape(-1)
-
-        if (
-            len(valores) != 7
-            or not np.isfinite(valores).all()
-        ):
-            raise ValueError(
-                "O modelo não retornou sete "
-                "previsões numéricas válidas."
-            )
-
-        valores = np.maximum(valores, 0)
 
         previsoes = []
 
@@ -127,66 +190,183 @@ def criar_previsao_semanal(
             for item in previsoes
         ] != list(range(1, 8)):
             raise ValueError(
-                "Os horizontes gerados estão incorretos."
+                "Horizontes inconsistentes."
             )
 
-        total = round(
-            sum(
-                item["vendas_previstas"]
-                for item in previsoes
-            ),
-            2,
-        )
-
-        data_origem = (
-            entradas["data_origem"]
-            .iloc[0]
-            .strftime("%Y-%m-%d")
-        )
-
         return {
-            "execucao_id": pasta.name,
+            "execucao_id": execucao_id,
             "loja_id": loja_id,
-            "data_origem": data_origem,
+            "data_origem": (
+                entradas["data_origem"]
+                .iloc[0]
+                .strftime("%Y-%m-%d")
+            ),
             "algoritmo": artefato["algoritmo"],
-            "tipo_modelo": "piloto_multihorizonte",
+            "tipo_modelo": "multihorizonte",
             "horizonte_dias": 7,
             "previsoes": previsoes,
-            "total_semanal_previsto": total,
+            "total_semanal_previsto": round(
+                sum(
+                    item["vendas_previstas"]
+                    for item in previsoes
+                ),
+                2,
+            ),
             "observacao": (
-                "As sete estimativas usam informações "
+                "As sete previsões usam informações "
                 "disponíveis até a data de origem. "
-                "O modelo é um piloto multihorizonte "
-                "com configurações fixas, ainda sem "
-                "otimização FLAML. Promoções e outros "
-                "eventos comerciais futuros não são "
-                "considerados nesta versão."
+                "Variáveis comerciais futuras "
+                "desconhecidas não são utilizadas "
+                "nesta versão."
             ),
         }
 
-    except FileNotFoundError as erro:
-        raise HTTPException(
-            status_code=404,
-            detail=str(erro),
-        ) from erro
+    except Exception as erro:
+        traduzir_erro(erro)
 
-    except LookupError as erro:
-        raise HTTPException(
-            status_code=404,
-            detail=str(erro),
-        ) from erro
 
-    except ValueError as erro:
-        raise HTTPException(
-            status_code=422,
-            detail=str(erro),
-        ) from erro
+@lru_cache(maxsize=3)
+def carregar_explicador_semanal(execucao_id: str):
+    """
+    Cria o explicador SHAP do modelo semanal.
+    """
 
-    except (KeyError, TypeError) as erro:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "O artefato do modelo semanal está "
-                "incompleto ou incompatível."
+    artefato = carregar_modelo_semanal(execucao_id)
+
+    return shap.TreeExplainer(
+        artefato["modelo"],
+        model_output="raw",
+    )
+
+
+@router.post(
+    "/{execucao_id}/lojas/{loja_id}"
+    "/semanal/explicacao/{dia}"
+)
+def explicar_previsao_semanal(
+    execucao_id: str,
+    loja_id: int = Path(gt=0),
+    dia: int = Path(ge=1, le=7),
+):
+    """
+    Calcula SHAP para um horizonte específico.
+
+    As contribuições representam o funcionamento
+    do modelo, e não relações de causa e efeito.
+    """
+
+    try:
+        artefato, entradas, x, valores_brutos, valores = (
+            preparar_previsoes(execucao_id, loja_id)
+        )
+
+        indice = dia - 1
+
+        x_dia = x.iloc[[indice]]
+
+        explicador = carregar_explicador_semanal(
+            execucao_id
+        )
+
+        explicacao = explicador(x_dia)
+
+        contribuicoes = np.asarray(
+            explicacao.values,
+            dtype=float,
+        )
+
+        if contribuicoes.shape != (1, x_dia.shape[1]):
+            raise ValueError(
+                "Formato SHAP incompatível."
+            )
+
+        contribuicoes = contribuicoes[0]
+
+        bases = np.asarray(
+            explicacao.base_values,
+            dtype=float,
+        ).reshape(-1)
+
+        if len(bases) != 1:
+            raise ValueError(
+                "Valor-base SHAP inválido."
+            )
+
+        valor_base = float(bases[0])
+
+        bruto = float(valores_brutos[indice])
+
+        reconstruida = (
+            valor_base + float(contribuicoes.sum())
+        )
+
+        diferenca = abs(bruto - reconstruida)
+
+        if not np.isfinite(
+            [valor_base, bruto, reconstruida, diferenca]
+        ).all() or not np.isfinite(contribuicoes).all():
+            raise ValueError(
+                "Valores SHAP inválidos."
+            )
+
+        if not np.isclose(
+            bruto,
+            reconstruida,
+            atol=0.1,
+            rtol=1e-4,
+        ):
+            raise ValueError(
+                "SHAP não reconstruiu a saída do modelo."
+            )
+
+        itens = [
+            {
+                "atributo": str(coluna),
+                "contribuicao": round(float(valor), 4),
+            }
+            for coluna, valor in zip(
+                x_dia.columns,
+                contribuicoes,
+            )
+        ]
+
+        itens.sort(
+            key=lambda item: abs(item["contribuicao"]),
+            reverse=True,
+        )
+
+        linha = entradas.iloc[indice]
+
+        return {
+            "execucao_id": execucao_id,
+            "loja_id": loja_id,
+            "data_origem": (
+                linha["data_origem"].strftime("%Y-%m-%d")
             ),
-        ) from erro
+            "data_prevista": (
+                linha["data"].strftime("%Y-%m-%d")
+            ),
+            "horizonte_dias": dia,
+            "algoritmo": artefato["algoritmo"],
+            "vendas_previstas": round(
+                float(valores[indice]),
+                2,
+            ),
+            "explicabilidade": {
+                "metodo": "SHAP",
+                "valor_base": round(valor_base, 2),
+                "previsao_bruta": round(bruto, 2),
+                "diferenca_reconstrucao": diferenca,
+                "principais_contribuicoes": itens[:10],
+                "observacao": (
+                    "SHAP mostra quais atributos aumentam "
+                    "ou reduzem a saída do modelo em relação "
+                    "ao valor-base. Não demonstra causalidade. "
+                    "Caso a saída do modelo seja negativa, "
+                    "a previsão exibida é limitada a zero."
+                ),
+            },
+        }
+
+    except Exception as erro:
+        traduzir_erro(erro)
