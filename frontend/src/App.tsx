@@ -46,6 +46,8 @@ import ConfiguracaoAutoML from './components/ConfiguracaoAutoML'
 import SeletorExecucao from './components/SeletorExecucao'
 import PrevisaoFutura from './components/PrevisaoFutura'
 import AtualizacaoHistorico from './components/AtualizacaoHistorico'
+import PrevisaoSemanal from './components/PrevisaoSemanal'
+import TreinamentoSemanal from './components/TreinamentoSemanal'
 
 import {
   parametrosValidos,
@@ -1189,6 +1191,21 @@ function App() {
             treinamentoDefinitivoConcluido
           }
         />
+        <TreinamentoSemanal
+  key={`treino-semanal-${execucaoId}`}
+  execucaoId={execucaoId}
+  treinamentoConcluido={
+    treinamentoDefinitivoConcluido
+  }
+/>
+        <PrevisaoSemanal
+  key={`semanal-${execucaoId}-${versaoHistorico}`}
+  execucaoId={execucaoId}
+  lojas={lojasDisponiveis}
+  treinamentoConcluido={
+    treinamentoDefinitivoConcluido
+  }
+/>
 
         {/* Atualização de vendas */}
 

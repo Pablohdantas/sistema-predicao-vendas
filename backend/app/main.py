@@ -26,7 +26,15 @@ from backend.app.routers.historico import (
 from backend.app.routers.execucoes import (
     router as execucoes_router
 )
-
+from backend.app.routers.previsoes_semanais import (
+    router as previsoes_semanais_router,
+)
+from backend.app.routers.treinamento_semanal import (
+    router as treinamento_semanal_router,
+)
+from backend.app.routers.treinamento_semanal import (
+    router as treinamento_semanal_router,
+)
 app = FastAPI(
     title="Sistema de Predição de Vendas",
     description=(
@@ -59,3 +67,6 @@ app.include_router(historico_router)
 app.include_router(previsoes_automaticas_router)
 app.include_router(previsoes_router)
 app.include_router(execucoes_router)
+app.include_router(previsoes_semanais_router)
+app.include_router(treinamento_semanal_router)
+app.include_router(treinamento_semanal_router)
