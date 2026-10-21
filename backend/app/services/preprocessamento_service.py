@@ -29,6 +29,16 @@ NUMERICAS_POSSIVEIS = [
     "media_movel_28",
     "observacoes_media_7",
     "observacoes_media_28",
+    "horizonte_dias",
+    "lag_origem",
+    "lag_7_origem",
+    "lag_14_origem",
+    "lag_21_origem",
+    "lag_28_origem",
+    "media_7_origem",
+    "media_28_origem",
+    "observacoes_7_origem",
+    "observacoes_28_origem",
 ]
 
 CATEGORICAS_POSSIVEIS = [
