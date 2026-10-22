@@ -1,32 +1,28 @@
 
 """
-Rotas para treinamento experimental multihorizonte.
+Treinamento AutoML multihorizonte.
 
-Permite:
-- Iniciar o treinamento semanal em uma thread.
-- Consultar o status do treinamento.
-- Reconhecer modelos semanais já treinados.
-- Impedir treinamentos simultâneos.
-- Preservar os modelos convencionais existentes.
+Permite iniciar e acompanhar o treinamento de
+modelos para previsão dos próximos sete dias.
 
-Esta implementação é destinada a uma instância local
-do FastAPI, executada com um único processo.
+Não exige treinamento convencional prévio.
+Preserva os modelos e avaliações já existentes.
+
+Execução local com um único processo Uvicorn.
 """
 
 import json
 import os
 import threading
-
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from backend.app.services.treinamento_service import (
-    consultar_treinamento,
     pasta_da_execucao,
 )
-
 from backend.app.services.pipeline_multihorizonte_service import (
     executar_pipeline_multihorizonte,
 )
@@ -34,23 +30,29 @@ from backend.app.services.pipeline_multihorizonte_service import (
 
 router = APIRouter(
     prefix="/treinamentos-semanais",
-    tags=["Treinamento semanal"],
+    tags=["Treinamento AutoML semanal"],
 )
 
 ARQUIVO_STATUS = "status_multihorizonte.json"
 
 CONTROLE = threading.Lock()
-
 EXECUCAO_ATIVA: str | None = None
 
 
+class ConfiguracaoTreinamentoSemanal(BaseModel):
+    tentativas: int = Field(default=3, ge=1, le=30)
+    tempo_por_algoritmo: int = Field(
+        default=30,
+        ge=1,
+        le=1800,
+    )
+
+
 def agora() -> str:
-    """Retorna a data e a hora atual em UTC."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def caminho_modelo(pasta: Path) -> Path:
-    """Retorna o caminho do modelo semanal."""
     return (
         pasta
         / "multihorizonte"
@@ -58,17 +60,7 @@ def caminho_modelo(pasta: Path) -> Path:
     )
 
 
-def salvar_status(
-    pasta: Path,
-    dados: dict,
-) -> None:
-    """
-    Salva o status de forma atômica.
-
-    Evita que o frontend leia um JSON parcialmente
-    escrito durante a atualização.
-    """
-
+def salvar_status(pasta: Path, dados: dict) -> None:
     destino = pasta / ARQUIVO_STATUS
 
     temporario = pasta / (
@@ -80,8 +72,8 @@ def salvar_status(
         temporario.write_text(
             json.dumps(
                 dados,
-                indent=2,
                 ensure_ascii=False,
+                indent=2,
             ),
             encoding="utf-8",
         )
@@ -89,41 +81,27 @@ def salvar_status(
         os.replace(temporario, destino)
 
     finally:
-        if temporario.exists():
-            temporario.unlink()
+        temporario.unlink(missing_ok=True)
 
 
-def consultar_status(
-    execucao_id: str,
-) -> dict:
-    """
-    Consulta o treinamento semanal.
-
-    Reconhece também modelos gerados anteriormente
-    pelo script de treinamento, mesmo quando ainda
-    não existe um arquivo de status.
-    """
-
+def consultar_status(execucao_id: str) -> dict:
     pasta = pasta_da_execucao(execucao_id)
-
     caminho = pasta / ARQUIVO_STATUS
-
     modelo = caminho_modelo(pasta)
 
     if not caminho.is_file():
-
         if modelo.is_file():
             return {
                 "execucao_id": pasta.name,
                 "status": "concluido",
-                "tipo": "piloto_multihorizonte",
+                "tipo": "multihorizonte",
                 "erro": None,
             }
 
         return {
             "execucao_id": pasta.name,
             "status": "nao_iniciado",
-            "tipo": "piloto_multihorizonte",
+            "tipo": "multihorizonte",
             "erro": None,
         }
 
@@ -132,18 +110,23 @@ def consultar_status(
     )
 
     if dados.get("status") == "em_andamento":
-
         with CONTROLE:
             ativa = EXECUCAO_ATIVA == pasta.name
 
         if not ativa:
-            dados["status"] = "interrompido"
-            dados["erro"] = (
-                "A tarefa não está ativa neste servidor. "
-                "O treinamento pode ter sido interrompido."
-            )
-            dados["atualizado_em"] = agora()
+            if modelo.is_file():
+                # O artefato pode ter sido salvo antes
+                # de uma interrupção do servidor.
+                dados["status"] = "concluido"
+                dados["erro"] = None
+            else:
+                dados["status"] = "interrompido"
+                dados["erro"] = (
+                    "Treinamento interrompido. "
+                    "Confira os arquivos da execução."
+                )
 
+            dados["atualizado_em"] = agora()
             salvar_status(pasta, dados)
 
     return dados
@@ -151,58 +134,61 @@ def consultar_status(
 
 def executar_tarefa(
     execucao_id: str,
+    tentativas: int,
+    tempo_por_algoritmo: int,
 ) -> None:
-    """
-    Executa o pipeline semanal em segundo plano.
-
-    Não altera o treinamento convencional.
-    """
-
     global EXECUCAO_ATIVA
 
     pasta = pasta_da_execucao(execucao_id)
 
     try:
         relatorio = executar_pipeline_multihorizonte(
-            execucao_id
+            execucao_id=execucao_id,
+            tentativas=tentativas,
+            tempo_por_algoritmo=tempo_por_algoritmo,
         )
 
-        dados = {
-            "execucao_id": execucao_id,
-            "status": "concluido",
-            "tipo": "piloto_multihorizonte",
-            "algoritmo_vencedor": relatorio[
-                "algoritmo_vencedor"
-            ],
-            "avaliacao_externa": relatorio[
-                "avaliacao_externa"
-            ],
-            "atualizado_em": agora(),
-            "erro": None,
-        }
-
-        salvar_status(pasta, dados)
+        salvar_status(
+            pasta,
+            {
+                "execucao_id": execucao_id,
+                "status": "concluido",
+                "tipo": "multihorizonte",
+                "algoritmo_vencedor": relatorio[
+                    "algoritmo_vencedor"
+                ],
+                "otimizacao_flaml": relatorio[
+                    "otimizacao_flaml"
+                ],
+                "avaliacao_externa": relatorio[
+                    "avaliacao_externa"
+                ],
+                "tentativas": tentativas,
+                "tempo_por_algoritmo": tempo_por_algoritmo,
+                "atualizado_em": agora(),
+                "erro": None,
+            },
+        )
 
     except Exception as erro:
-
         print(
-            f"Erro no treinamento semanal "
-            f"{execucao_id}: "
+            f"Erro no AutoML semanal {execucao_id}: "
             f"{type(erro).__name__}: {erro}",
             flush=True,
         )
 
-        dados = {
-            "execucao_id": execucao_id,
-            "status": "falhou",
-            "tipo": "piloto_multihorizonte",
-            "atualizado_em": agora(),
-            "erro": (
-                f"{type(erro).__name__}: {erro}"
-            ),
-        }
-
-        salvar_status(pasta, dados)
+        salvar_status(
+            pasta,
+            {
+                "execucao_id": execucao_id,
+                "status": "falhou",
+                "tipo": "multihorizonte",
+                "atualizado_em": agora(),
+                "erro": (
+                    f"{type(erro).__name__}: {erro}"
+                ),
+            },
+        )
 
     finally:
         with CONTROLE:
@@ -211,11 +197,7 @@ def executar_tarefa(
 
 
 @router.get("/{execucao_id}")
-def obter_status_semanal(
-    execucao_id: str,
-):
-    """Consulta o status do treinamento semanal."""
-
+def obter_status_semanal(execucao_id: str):
     try:
         return consultar_status(execucao_id)
 
@@ -232,29 +214,15 @@ def obter_status_semanal(
         ) from erro
 
 
-@router.post(
-    "/{execucao_id}",
-    status_code=202,
-)
+@router.post("/{execucao_id}", status_code=202)
 def iniciar_treinamento_semanal(
     execucao_id: str,
+    configuracao: ConfiguracaoTreinamentoSemanal,
 ):
-    """
-    Inicia o treinamento multihorizonte.
-
-    Esta versão experimental só permite iniciar
-    o treinamento semanal após a conclusão do
-    treinamento convencional.
-    """
-
     global EXECUCAO_ATIVA
 
     try:
         pasta = pasta_da_execucao(execucao_id)
-
-        status_original = consultar_treinamento(
-            execucao_id
-        )
 
     except FileNotFoundError as erro:
         raise HTTPException(
@@ -268,53 +236,15 @@ def iniciar_treinamento_semanal(
             detail=str(erro),
         ) from erro
 
-    if (
-        status_original.get("status") != "concluido"
-        or status_original.get("modo")
-        != "treinamento_definitivo"
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Conclua primeiro o treinamento "
-                "definitivo convencional."
-            ),
-        )
-
-    # Impede sobrescrever modelos já existentes.
-    if (pasta / "multihorizonte").exists():
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Esta execução já possui arquivos "
-                "do modelo semanal."
-            ),
-        )
-
-    # Esta consulta acontece FORA do bloqueio.
-    # Assim, evitamos bloquear a própria thread
-    # ao tentar consultar o status.
-    status_anterior = consultar_status(
-        execucao_id
-    )
-
-    if status_anterior["status"] == "concluido":
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "O treinamento semanal "
-                "já foi concluído."
-            ),
-        )
+    # Não é necessário treinar o modelo convencional.
 
     with CONTROLE:
-
         if EXECUCAO_ATIVA is not None:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Já existe outro treinamento semanal "
-                    "em andamento neste servidor."
+                    "Outro treinamento semanal "
+                    "já está em andamento."
                 ),
             )
 
@@ -323,42 +253,64 @@ def iniciar_treinamento_semanal(
                 status_code=409,
                 detail=(
                     "Esta execução já possui "
-                    "um modelo semanal."
+                    "arquivos do modelo semanal."
                 ),
             )
 
+        caminho = pasta / ARQUIVO_STATUS
+
+        if caminho.is_file():
+            anterior = json.loads(
+                caminho.read_text(encoding="utf-8")
+            )
+
+            if anterior.get("status") in (
+                "em_andamento",
+                "concluido",
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "O treinamento semanal já foi "
+                        "iniciado ou concluído."
+                    ),
+                )
+
         dados = {
-            "execucao_id": execucao_id,
+            "execucao_id": pasta.name,
             "status": "em_andamento",
-            "tipo": "piloto_multihorizonte",
+            "tipo": "multihorizonte",
+            "tentativas": configuracao.tentativas,
+            "tempo_por_algoritmo": (
+                configuracao.tempo_por_algoritmo
+            ),
             "iniciado_em": agora(),
             "atualizado_em": agora(),
             "erro": None,
         }
 
         salvar_status(pasta, dados)
-
-        EXECUCAO_ATIVA = execucao_id
+        EXECUCAO_ATIVA = pasta.name
 
         tarefa = threading.Thread(
             target=executar_tarefa,
-            args=(execucao_id,),
+            args=(
+                pasta.name,
+                configuracao.tentativas,
+                configuracao.tempo_por_algoritmo,
+            ),
             daemon=True,
-            name=f"semanal-{execucao_id[:8]}",
+            name=f"semanal-{pasta.name[:8]}",
         )
 
         try:
             tarefa.start()
 
         except Exception as erro:
-
             EXECUCAO_ATIVA = None
 
             dados["status"] = "falhou"
-            dados["erro"] = (
-                "Não foi possível iniciar "
-                "a thread de treinamento."
-            )
+            dados["erro"] = "Falha ao iniciar treinamento."
             dados["atualizado_em"] = agora()
 
             salvar_status(pasta, dados)
