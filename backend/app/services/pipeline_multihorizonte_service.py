@@ -770,14 +770,38 @@ def executar_pipeline_multihorizonte(
         )
     )
 
+    # Modelo usado para a avaliação externa: não sofre reajuste.
+    artefato_avaliacao = {
+        "algoritmo": vencedor,
+        "modelo": modelo_final,
+        "preprocessamento": esquema_final,
+        "horizontes": HORIZONTES,
+        "tipo": "multihorizonte_avaliacao_externa",
+    }
+
+    # Apenas após a avaliação externa: treino operacional com todos
+    # os exemplos disponíveis. A seleção e os hiperparâmetros não mudam.
+    exemplos_operacionais = pd.concat([treino, teste], ignore_index=True)
+    esquema_operacional = ajustar_preprocessamento(exemplos_operacionais)
+    x_operacional = transformar_atributos(
+        exemplos_operacionais, esquema_operacional
+    )
+    modelo_operacional = criar_modelo(vencedor, configuracao_vencedora)
+    modelo_operacional.fit(
+        x_operacional,
+        exemplos_operacionais["vendas"].to_numpy(dtype=float),
+    )
+    del x_operacional, exemplos_operacionais
+    gc.collect()
+
     # Gera previsões futuras usando o modelo salvo
     # com o histórico original desta execução.
     # Na API, previsões posteriores usam o histórico
     # atualizado, sem retreinamento.
     previsoes_futuras = gerar_previsoes_semanais(
         dados,
-        modelo_final,
-        esquema_final,
+        modelo_operacional,
+        esquema_operacional,
     )
 
     relatorio = {
@@ -794,6 +818,13 @@ def executar_pipeline_multihorizonte(
         "avaliacao_externa": {
             "agregado": agregado,
             "por_horizonte": por_horizonte,
+            "modelo": "modelo_avaliacao_externa.joblib",
+        },
+        "modelo_operacional": {
+            "arquivo": "modelo_multihorizonte.joblib",
+            "treinado_com_historico_completo": True,
+            "algoritmo": vencedor,
+            "parametros_fixos_apos_validacao": True,
         },
         "tempo_total_segundos": round(
             time.perf_counter() - inicio,
@@ -805,8 +836,8 @@ def executar_pipeline_multihorizonte(
     # endpoint de previsão semanal já conhece.
     artefato = {
         "algoritmo": vencedor,
-        "modelo": modelo_final,
-        "preprocessamento": esquema_final,
+        "modelo": modelo_operacional,
+        "preprocessamento": esquema_operacional,
         "horizontes": HORIZONTES,
         "tipo": "multihorizonte",
     }
@@ -816,6 +847,10 @@ def executar_pipeline_multihorizonte(
         exist_ok=False,
     )
 
+    joblib.dump(
+        artefato_avaliacao,
+        destino / "modelo_avaliacao_externa.joblib",
+    )
     joblib.dump(
         artefato,
         destino / "modelo_multihorizonte.joblib",
