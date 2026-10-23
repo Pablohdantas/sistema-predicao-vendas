@@ -1,0 +1,18 @@
+.fluxo-conteudo { display: grid; gap: 22px; }
+.fluxo-conteudo .page-header { margin-bottom: 0; }
+.fluxo-conteudo .panel { margin: 0; }
+.navigation a.ativo { color: #fff; background: #254555; }
+.fluxo-carregando { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 55vh; color: #586b7b; }
+.fluxo-acoes { display: flex; flex-direction: column; gap: 16px; align-items: flex-start; }
+.fluxo-link-primario, .fluxo-link-secundario { display: inline-flex; align-items: center; gap: 10px; padding: 11px 15px; border-radius: 10px; text-decoration: none; font-size: 13px; font-weight: 700; }
+.fluxo-link-primario { background: #21836a; color: white; }
+.fluxo-link-secundario { background: #edf3f6; color: #415b6c; }
+.fluxo-tabela-rolagem { max-width: 100%; overflow-x: auto; }
+.fluxo-tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fluxo-tabela th, .fluxo-tabela td { text-align: left; border-bottom: 1px solid #e6ebf0; padding: 12px; white-space: nowrap; }
+.fluxo-tabela th { color: #637688; font-weight: 700; }
+@media (max-width: 760px) { .fluxo-acoes { align-items: stretch; } .fluxo-link-primario, .fluxo-link-secundario { justify-content: center; } }
+
+.tela-processamento { align-items: center; text-align: center; justify-content: center; min-height: 330px; gap: 18px; }
+.tela-processamento h2 { margin: 0; }
+.tela-processamento p { max-width: 540px; margin: 0; }

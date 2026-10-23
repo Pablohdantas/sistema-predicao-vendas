@@ -45,9 +45,9 @@ import GuiaTemplate from './components/GuiaTemplate'
 import ConfiguracaoAutoML from './components/ConfiguracaoAutoML'
 import SeletorExecucao from './components/SeletorExecucao'
 import PrevisaoFutura from './components/PrevisaoFutura'
-import AtualizacaoHistorico from './components/AtualizacaoHistorico'
 import PrevisaoSemanal from './components/PrevisaoSemanal'
 import TreinamentoSemanal from './components/TreinamentoSemanal'
+import AtualizacaoHistorico from './components/AtualizacaoHistorico'
 
 import {
   parametrosValidos,
@@ -67,6 +67,11 @@ type RespostaLojas = {
   lojas: number[]
 }
 
+type ModeloSemanalDisponivel = {
+  execucaoId: string
+  disponivel: boolean
+}
+
 const formatarNumero = (
   valor: number,
   casas = 2,
@@ -79,6 +84,7 @@ const formatarNumero = (
 
 const formatarData = (data: string): string => {
   const [ano, mes, dia] = data.slice(0, 10).split('-')
+
   return `${dia}/${mes}/${ano}`
 }
 
@@ -119,16 +125,20 @@ function App() {
   const [lojasExecucao, setLojasExecucao] =
     useState<string[]>([])
 
-  // Recria o seletor após um novo upload.
   const [versaoListaExecucoes, setVersaoListaExecucoes] =
     useState(0)
 
-  // Recarrega as previsões após atualizar vendas.
   const [versaoHistorico, setVersaoHistorico] =
     useState(0)
 
+  // O modelo semanal pertence a uma execução específica.
+  // Guardamos o ID para nunca reutilizar indevidamente
+  // o estado de uma execução anterior.
+  const [modeloSemanal, setModeloSemanal] =
+    useState<ModeloSemanalDisponivel | null>(null)
+
   // --------------------------------------------------
-  // Estados de carregamento e mensagens
+  // Carregamento e mensagens
   // --------------------------------------------------
 
   const [enviando, setEnviando] = useState(false)
@@ -148,7 +158,7 @@ function App() {
   const [mensagemSucesso, setMensagemSucesso] = useState('')
 
   // --------------------------------------------------
-  // Configuração do AutoML
+  // Configuração do treinamento convencional
   // --------------------------------------------------
 
   const [
@@ -161,7 +171,34 @@ function App() {
   })
 
   // --------------------------------------------------
-  // Consulta de status
+  // Disponibilidade do modelo semanal
+  // --------------------------------------------------
+
+  const atualizarDisponibilidadeSemanal = useCallback(
+    (disponivel: boolean) => {
+      setModeloSemanal((anterior) => {
+        if (
+          anterior?.execucaoId === execucaoId &&
+          anterior.disponivel === disponivel
+        ) {
+          return anterior
+        }
+
+        return {
+          execucaoId,
+          disponivel,
+        }
+      })
+    },
+    [execucaoId],
+  )
+
+  const treinamentoSemanalConcluido =
+    modeloSemanal?.execucaoId === execucaoId &&
+    modeloSemanal.disponivel
+
+  // --------------------------------------------------
+  // Consultar status do treinamento convencional
   // --------------------------------------------------
 
   const atualizarStatus = useCallback(
@@ -177,7 +214,6 @@ function App() {
     [],
   )
 
-  // Consulta manual com feedback visual.
   const atualizarStatusManualmente = async () => {
     if (!execucaoId || atualizandoStatusManual) {
       return
@@ -212,7 +248,7 @@ function App() {
   }
 
   // --------------------------------------------------
-  // Avaliação externa
+  // Carregar avaliação externa convencional
   // --------------------------------------------------
 
   const carregarResultados = useCallback(
@@ -251,7 +287,7 @@ function App() {
   )
 
   // --------------------------------------------------
-  // Carrega o status da execução selecionada
+  // Buscar status da execução selecionada
   // --------------------------------------------------
 
   useEffect(() => {
@@ -285,7 +321,7 @@ function App() {
   }, [execucaoId])
 
   // --------------------------------------------------
-  // Acompanha treinamento em andamento
+  // Acompanhar treinamento convencional
   // --------------------------------------------------
 
   useEffect(() => {
@@ -315,7 +351,7 @@ function App() {
   ])
 
   // --------------------------------------------------
-  // Carrega resultados do treinamento definitivo
+  // Buscar resultados convencionais concluídos
   // --------------------------------------------------
 
   useEffect(() => {
@@ -342,7 +378,7 @@ function App() {
   ])
 
   // --------------------------------------------------
-  // Carrega todas as lojas do histórico
+  // Carregar lojas do histórico
   // --------------------------------------------------
 
   useEffect(() => {
@@ -399,7 +435,7 @@ function App() {
   }
 
   // --------------------------------------------------
-  // Upload do CSV
+  // Enviar dataset
   // --------------------------------------------------
 
   const enviarDataset = async () => {
@@ -415,6 +451,7 @@ function App() {
     setMensagemSucesso('')
 
     const formulario = new FormData()
+
     formulario.append('arquivo', arquivo)
 
     try {
@@ -443,21 +480,24 @@ function App() {
 
       setExecucaoId(dados.execucao_id)
 
+      // Nova execução: todos os estados anteriores
+      // deixam de ser válidos.
       setStatus(null)
       setAvaliacao(null)
       setPrevisoes([])
       setLojasExecucao([])
       setLojaSelecionada('')
+      setModeloSemanal(null)
+
       setVersaoHistorico(0)
 
-      // Faz o SeletorExecucao buscar a lista atualizada.
       setVersaoListaExecucoes(
         (versao) => versao + 1,
       )
 
       setMensagemSucesso(
         'Dataset validado e armazenado. ' +
-        'Você já pode iniciar o treinamento.',
+        'Você já pode iniciar o AutoML semanal.',
       )
     } catch (erro) {
       setMensagemErro(obterMensagemErro(erro))
@@ -467,7 +507,7 @@ function App() {
   }
 
   // --------------------------------------------------
-  // Iniciar treinamento
+  // Iniciar treinamento convencional
   // --------------------------------------------------
 
   const iniciarTreinamento = async () => {
@@ -491,7 +531,7 @@ function App() {
       setStatus(resposta.data)
 
       setMensagemSucesso(
-        'Treinamento iniciado com sucesso!',
+        'Treinamento convencional iniciado!',
       )
     } catch (erro) {
       setMensagemErro(obterMensagemErro(erro))
@@ -501,7 +541,7 @@ function App() {
   }
 
   // --------------------------------------------------
-  // Separação entre lojas para gráfico e previsão
+  // Lojas e gráfico de avaliação
   // --------------------------------------------------
 
   const lojasAvaliacao = Array.from(
@@ -510,10 +550,8 @@ function App() {
     ),
   ).sort((a, b) => Number(a) - Number(b))
 
-  // Previsão futura: todas as lojas existentes.
   const lojasDisponiveis = lojasExecucao
 
-  // Avaliação: somente lojas recuperadas no teste externo.
   const lojaAtiva = lojasAvaliacao.includes(lojaSelecionada)
     ? lojaSelecionada
     : lojasAvaliacao[0] || ''
@@ -529,7 +567,7 @@ function App() {
     }))
 
   // --------------------------------------------------
-  // Estado da execução
+  // Estado do treinamento convencional
   // --------------------------------------------------
 
   const emAndamento =
@@ -543,13 +581,13 @@ function App() {
     status?.modo === 'treinamento_definitivo'
 
   const podeTreinar =
-    !!execucaoId &&
+    Boolean(execucaoId) &&
     !emAndamento &&
     !iniciando &&
     status?.status !== 'concluido'
 
   // --------------------------------------------------
-  // Seleção de execuções
+  // Trocar execução selecionada
   // --------------------------------------------------
 
   const selecionarExecucao = (id: string) => {
@@ -564,6 +602,7 @@ function App() {
     }
 
     setExecucaoId(id)
+
     setArquivo(null)
     setUpload(null)
     setStatus(null)
@@ -571,6 +610,8 @@ function App() {
     setPrevisoes([])
     setLojasExecucao([])
     setLojaSelecionada('')
+    setModeloSemanal(null)
+
     setVersaoHistorico(0)
 
     setMensagemErro('')
@@ -604,7 +645,7 @@ function App() {
             Execuções
           </a>
 
-          <a href="#previsao-futura">
+          <a href="#previsao-semanal">
             <CalendarDays size={19} />
             Previsões futuras
           </a>
@@ -624,7 +665,7 @@ function App() {
             Dataset
           </a>
 
-          <a href="#treinamento">
+          <a href="#treinamento-semanal">
             <BrainCircuit size={19} />
             Treinamento
           </a>
@@ -696,15 +737,15 @@ function App() {
           </div>
         )}
 
-        {/* Métricas */}
+        {/* Métricas do modelo convencional */}
 
         <section
           className="summary-grid"
-          aria-label="Resumo"
+          aria-label="Resumo do modelo convencional"
         >
           <div className="metric-card">
             <span className="metric-label">
-              Modelo vencedor
+              Modelo convencional
             </span>
 
             <strong className="metric-value">
@@ -714,7 +755,7 @@ function App() {
             </strong>
 
             <span className="metric-hint">
-              Selecionado pelo AutoML
+              Horizonte de 7 dias
             </span>
           </div>
 
@@ -730,7 +771,7 @@ function App() {
             </strong>
 
             <span className="metric-hint">
-              Erro no período reservado
+              Avaliação convencional
             </span>
           </div>
 
@@ -765,7 +806,7 @@ function App() {
             </strong>
 
             <span className="metric-hint">
-              Teste temporal externo
+              Teste temporal convencional
             </span>
           </div>
         </section>
@@ -882,7 +923,7 @@ function App() {
             )}
           </section>
 
-          {/* Treinamento */}
+          {/* Treinamento convencional preservado */}
 
           <section
             className="panel"
@@ -890,10 +931,10 @@ function App() {
           >
             <div className="panel-heading">
               <div>
-                <h2>Treinamento AutoML</h2>
+                <h2>Treinamento convencional</h2>
 
                 <p>
-                  Competição entre LightGBM e XGBoost.
+                  Modelo de horizonte fixo de sete dias.
                 </p>
               </div>
 
@@ -906,7 +947,7 @@ function App() {
             <div className="training-status">
               <div className="training-status-top">
                 <span>
-                  Status da execução
+                  Status da execução convencional
                 </span>
 
                 <span
@@ -923,7 +964,7 @@ function App() {
 
               <strong>
                 {status?.etapa?.replaceAll('_', ' ') ??
-                  'Aguardando dataset'}
+                  'Aguardando treinamento'}
               </strong>
 
               {execucaoId && (
@@ -1000,7 +1041,7 @@ function App() {
                   ? 'Iniciando...'
                   : concluido
                     ? 'Treinamento concluído'
-                    : 'Iniciar treinamento'}
+                    : 'Iniciar treinamento convencional'}
             </button>
 
             {execucaoId && (
@@ -1035,7 +1076,17 @@ function App() {
           </section>
         </div>
 
-        {/* Gráfico de avaliação */}
+        {/* Treinamento AutoML semanal principal */}
+
+        <TreinamentoSemanal
+          key={`treino-semanal-${execucaoId}`}
+          execucaoId={execucaoId}
+          onModeloDisponivel={
+            atualizarDisponibilidadeSemanal
+          }
+        />
+
+        {/* Avaliação convencional */}
 
         <section
           className="panel chart-panel"
@@ -1048,8 +1099,8 @@ function App() {
               </h2>
 
               <p>
-                Comparação no conjunto de teste
-                temporal externo.
+                Comparação no teste temporal externo
+                do modelo convencional.
               </p>
             </div>
 
@@ -1150,9 +1201,10 @@ function App() {
               <p className="chart-footnote">
                 O gráfico mostra somente as
                 observações recuperadas pela API
-                (limite atual: 1.000).
-                As métricas acima consideram
-                todo o teste externo.
+                (limite de 1.000).
+                As métricas exibidas no topo
+                consideram todo o teste externo
+                convencional.
               </p>
             </>
           ) : (
@@ -1168,20 +1220,32 @@ function App() {
 
               <strong>
                 {carregandoResultados
-                  ? 'Carregando os resultados...'
-                  : 'Nenhum gráfico disponível ainda'}
+                  ? 'Carregando resultados...'
+                  : 'Sem avaliação convencional'}
               </strong>
 
               <p>
-                Envie um dataset e conclua o
-                treinamento definitivo para
-                visualizar o desempenho do modelo.
+                A avaliação convencional será exibida
+                quando houver um modelo de horizonte
+                fixo concluído. O AutoML semanal
+                funciona independentemente dela.
               </p>
             </div>
           )}
         </section>
 
-        {/* Previsões automáticas e SHAP */}
+        {/* Previsão semanal + SHAP: fluxo principal */}
+
+        <PrevisaoSemanal
+          key={`semanal-${execucaoId}-${versaoHistorico}`}
+          execucaoId={execucaoId}
+          lojas={lojasDisponiveis}
+          treinamentoConcluido={
+            treinamentoSemanalConcluido
+          }
+        />
+
+        {/* Previsão antiga preservada */}
 
         <PrevisaoFutura
           key={`${execucaoId}-${versaoHistorico}`}
@@ -1191,43 +1255,29 @@ function App() {
             treinamentoDefinitivoConcluido
           }
         />
-        <TreinamentoSemanal
-  key={`treino-semanal-${execucaoId}`}
+
+        {/* Atualização do histórico */}
+
+       <AtualizacaoHistorico
+  key={execucaoId}
   execucaoId={execucaoId}
   treinamentoConcluido={
-    treinamentoDefinitivoConcluido
+    treinamentoDefinitivoConcluido ||
+    treinamentoSemanalConcluido
   }
+  onHistoricoAtualizado={() => {
+    setVersaoHistorico(
+      (versao) => versao + 1,
+    )
+  }}
 />
-        <PrevisaoSemanal
-  key={`semanal-${execucaoId}-${versaoHistorico}`}
-  execucaoId={execucaoId}
-  lojas={lojasDisponiveis}
-  treinamentoConcluido={
-    treinamentoDefinitivoConcluido
-  }
-/>
-
-        {/* Atualização de vendas */}
-
-        <AtualizacaoHistorico
-          key={execucaoId}
-          execucaoId={execucaoId}
-          treinamentoConcluido={
-            treinamentoDefinitivoConcluido
-          }
-          onHistoricoAtualizado={() => {
-            setVersaoHistorico(
-              (versao) => versao + 1,
-            )
-          }}
-        />
 
         <footer className="page-footer">
           Sistema de Predição de Vendas ·
           AutoML + XAI · Protótipo acadêmico
 
-          {status?.status === 'concluido' &&
-            ' · Última execução concluída'}
+          {treinamentoSemanalConcluido &&
+            ' · Modelo semanal disponível'}
         </footer>
       </main>
     </div>
