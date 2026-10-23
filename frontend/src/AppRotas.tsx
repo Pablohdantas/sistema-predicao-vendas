@@ -7,7 +7,8 @@ import {
   History,
   LoaderCircle,
 } from 'lucide-react'
-import { ExecucaoProvider, useExecucao } from './context/ExecucaoContext'
+import { ExecucaoProvider } from './context/ExecucaoContext'
+import { useExecucao } from './context/useExecucao'
 import Entrada from './pages/Entrada'
 import Treinamento from './pages/Treinamento'
 import Dashboard from './pages/Dashboard'

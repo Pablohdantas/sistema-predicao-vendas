@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AlertTriangle, BrainCircuit, CheckCircle2, LoaderCircle } from 'lucide-react'
 import { api, obterMensagemErro } from '../services/api'
-import { useExecucao } from '../context/ExecucaoContext'
+import { useExecucao } from '../context/useExecucao'
 
 const CHAVE_INICIO_AUTOMATICO = 'automl_treinamento_pendente'
 

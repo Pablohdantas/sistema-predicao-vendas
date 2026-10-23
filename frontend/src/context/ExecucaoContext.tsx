@@ -1,53 +1,26 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useRef,
   useState,
 } from 'react'
 import type { ReactNode } from 'react'
 import { api, obterMensagemErro } from '../services/api'
-
-const CHAVE_EXECUCAO = 'automl_execucao_atual'
-
-type Metricas = {
-  rmse: number
-  mae: number
-  quantidade: number
-}
-
-type StatusSemanal = {
-  execucao_id: string
-  status: 'nao_iniciado' | 'em_andamento' | 'concluido' | 'falhou' | 'interrompido'
-  algoritmo_vencedor?: string
-  avaliacao_externa?: {
-    agregado: Metricas
-    por_horizonte: Record<string, Metricas>
-  }
-  erro?: string | null
-}
+import {
+  CHAVE_EXECUCAO,
+  ExecucaoContext,
+  type StatusSemanal,
+} from './execucaoContext'
 
 type RespostaExecucoes = {
   execucoes: { execucao_id: string }[]
 }
 
-type Contexto = {
-  execucaoId: string
-  statusSemanal: StatusSemanal | null
-  carregando: boolean
-  erro: string
-  selecionarExecucao: (id: string) => Promise<boolean>
-  limparSelecao: () => void
-  atualizarStatus: () => Promise<void>
-}
-
-const ExecucaoContext = createContext<Contexto | null>(null)
-
 export function ExecucaoProvider({ children }: { children: ReactNode }) {
+  const [idInicial] = useState(() => localStorage.getItem(CHAVE_EXECUCAO) ?? '')
   const [execucaoId, setExecucaoId] = useState('')
   const [statusSemanal, setStatusSemanal] = useState<StatusSemanal | null>(null)
-  const [carregando, setCarregando] = useState(true)
+  const [carregando, setCarregando] = useState(Boolean(idInicial))
   const [erro, setErro] = useState('')
   const atualRef = useRef('')
   const solicitacaoRef = useRef(0)
@@ -113,14 +86,39 @@ export function ExecucaoProvider({ children }: { children: ReactNode }) {
     }
   }, [consultarStatus])
 
+  // Restauração inicial: as atualizações ocorrem nas respostas assíncronas.
+  // O contador descarta respostas obsoletas (inclusive no StrictMode).
   useEffect(() => {
-    const idSalvo = localStorage.getItem(CHAVE_EXECUCAO)
-    if (idSalvo) {
-      void selecionarExecucao(idSalvo)
-    } else {
-      setCarregando(false)
+    if (!idInicial) return
+    const referenciaSolicitacao = solicitacaoRef
+    const solicitacao = ++referenciaSolicitacao.current
+
+    void api.get<RespostaExecucoes>('/execucoes/').then(async ({ data }) => {
+      if (solicitacao !== solicitacaoRef.current) return
+      if (!data.execucoes.some((item) => item.execucao_id === idInicial)) {
+        throw new Error('O histórico salvo não existe mais no servidor.')
+      }
+      const resposta = await api.get<StatusSemanal>(`/treinamentos-semanais/${idInicial}`)
+      if (solicitacao !== solicitacaoRef.current) return
+      atualRef.current = idInicial
+      setExecucaoId(idInicial)
+      setStatusSemanal(resposta.data)
+      setErro('')
+    }).catch((falha: unknown) => {
+      if (solicitacao !== solicitacaoRef.current) return
+      atualRef.current = ''
+      setExecucaoId('')
+      setStatusSemanal(null)
+      localStorage.removeItem(CHAVE_EXECUCAO)
+      setErro(obterMensagemErro(falha))
+    }).finally(() => {
+      if (solicitacao === solicitacaoRef.current) setCarregando(false)
+    })
+
+    return () => {
+      ++referenciaSolicitacao.current
     }
-  }, [selecionarExecucao])
+  }, [idInicial])
 
   useEffect(() => {
     if (!execucaoId || statusSemanal?.status !== 'em_andamento') return
@@ -143,10 +141,4 @@ export function ExecucaoProvider({ children }: { children: ReactNode }) {
       {children}
     </ExecucaoContext.Provider>
   )
-}
-
-export function useExecucao(): Contexto {
-  const contexto = useContext(ExecucaoContext)
-  if (!contexto) throw new Error('useExecucao requer ExecucaoProvider.')
-  return contexto
 }

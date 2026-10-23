@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import PrevisaoSemanal from '../components/PrevisaoSemanal'
-import { useExecucao } from '../context/ExecucaoContext'
+import { useExecucao } from '../context/useExecucao'
 import { api, obterMensagemErro } from '../services/api'
 
 type RespostaLojas = { lojas: number[] }

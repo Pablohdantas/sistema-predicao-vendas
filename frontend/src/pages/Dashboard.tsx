@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Activity, CalendarDays } from 'lucide-react'
-import { useExecucao } from '../context/ExecucaoContext'
+import { useExecucao } from '../context/useExecucao'
 
 const formatar = (valor: number | undefined) =>
   valor == null ? '—' : new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(valor)

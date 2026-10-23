@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
 import AtualizacaoHistorico from '../components/AtualizacaoHistorico'
-import { useExecucao } from '../context/ExecucaoContext'
+import { useExecucao } from '../context/useExecucao'
 
 export default function Historico() {
   const { execucaoId } = useExecucao()

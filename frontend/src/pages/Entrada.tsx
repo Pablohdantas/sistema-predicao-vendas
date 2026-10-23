@@ -6,7 +6,7 @@ import GuiaTemplate from '../components/GuiaTemplate'
 import SeletorExecucao from '../components/SeletorExecucao'
 import { api, obterMensagemErro } from '../services/api'
 import type { DatasetResponse } from '../services/api'
-import { useExecucao } from '../context/ExecucaoContext'
+import { useExecucao } from '../context/useExecucao'
 
 const CHAVE_INICIO_AUTOMATICO = 'automl_treinamento_pendente'
 

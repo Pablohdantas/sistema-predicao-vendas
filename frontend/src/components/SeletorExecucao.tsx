@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Database, LoaderCircle, RefreshCw } from 'lucide-react'
 import { api, obterMensagemErro } from '../services/api'
 
@@ -26,25 +26,49 @@ const nomesStatus: Record<string, string> = {
 
 export default function SeletorExecucao({ execucaoSelecionada, onSelecionar }: Props) {
   const [execucoes, setExecucoes] = useState<Execucao[]>([])
-  const [carregando, setCarregando] = useState(false)
+  const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState('')
+  const requisicaoRef = useRef(0)
+
+  // O efeito apenas inicia a sincronização externa; atualizações de estado
+  // ocorrem quando a requisição retorna, não no corpo síncrono do efeito.
+  useEffect(() => {
+    const requisicao = ++requisicaoRef.current
+
+    void api.get<RespostaExecucoes>('/execucoes/').then(
+      ({ data }) => {
+        if (requisicao !== requisicaoRef.current) return
+        setExecucoes(data.execucoes)
+        setErro('')
+      },
+      (falha: unknown) => {
+        if (requisicao !== requisicaoRef.current) return
+        setErro(obterMensagemErro(falha))
+      },
+    ).finally(() => {
+      if (requisicao === requisicaoRef.current) setCarregando(false)
+    })
+
+    return () => {
+      ++requisicaoRef.current
+    }
+  }, [])
 
   const buscarExecucoes = useCallback(async () => {
+    const requisicao = ++requisicaoRef.current
     setCarregando(true)
     setErro('')
     try {
       const resposta = await api.get<RespostaExecucoes>('/execucoes/')
-      setExecucoes(resposta.data.execucoes)
+      if (requisicao === requisicaoRef.current) {
+        setExecucoes(resposta.data.execucoes)
+      }
     } catch (falha) {
-      setErro(obterMensagemErro(falha))
+      if (requisicao === requisicaoRef.current) setErro(obterMensagemErro(falha))
     } finally {
-      setCarregando(false)
+      if (requisicao === requisicaoRef.current) setCarregando(false)
     }
   }, [])
-
-  useEffect(() => {
-    void buscarExecucoes()
-  }, [buscarExecucoes])
 
   return (
     <section className="panel" id="execucoes">
