@@ -24,6 +24,31 @@ import {
   YAxis,
 } from 'recharts'
 import { api, obterMensagemErro } from '../services/api'
+// Aparência compartilhada dos tooltips de previsão semanal e SHAP.
+const estiloTooltip = {
+  contentStyle: {
+    backgroundColor: '#101A28',
+    color: '#E8EEF6',
+    border: '1px solid #2A394D',
+    borderRadius: 8,
+    boxShadow: 'none',
+    padding: '10px 12px',
+  },
+  labelStyle: {
+    color: '#B2C1D2',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  itemStyle: {
+    color: '#7DE0D5',
+    fontSize: 12,
+  },
+  wrapperStyle: {
+    zIndex: 10,
+    outline: 'none',
+  },
+}
+
 type PrevisaoDia = {
   horizonte_dias: number
   data_prevista: string
@@ -381,9 +406,12 @@ margin={{
                 <XAxis dataKey="dia" />
                 <YAxis width={75} />
                 <Tooltip
-formatter={(valor) =>
-                    formatarNumero(Number(valor))
-                  }
+                  {...estiloTooltip}
+                  cursor={{ stroke: '#516176', strokeDasharray: '3 3' }}
+                  formatter={(valor) => [
+                    formatarNumero(Number(valor)),
+                    'Vendas previstas',
+                  ]}
                 />
                 <Line
 name="Vendas previstas"
@@ -612,7 +640,9 @@ width={205}
 tick={{ fontSize: 11 }}
                       />
                       <Tooltip
-formatter={(valor) => [
+                        {...estiloTooltip}
+                        cursor={false}
+                        formatter={(valor) => [
                           formatarNumero(Number(valor)),
                           'Contribuição SHAP',
                         ]}
