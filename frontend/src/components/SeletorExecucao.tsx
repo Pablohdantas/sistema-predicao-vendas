@@ -34,23 +34,24 @@ export default function SeletorExecucao({ execucaoSelecionada, onSelecionar }: P
   // ocorrem quando a requisição retorna, não no corpo síncrono do efeito.
   useEffect(() => {
     const requisicao = ++requisicaoRef.current
+    let ativo = true
 
     void api.get<RespostaExecucoes>('/execucoes/').then(
       ({ data }) => {
-        if (requisicao !== requisicaoRef.current) return
+        if (!ativo || requisicao !== requisicaoRef.current) return
         setExecucoes(data.execucoes)
         setErro('')
       },
       (falha: unknown) => {
-        if (requisicao !== requisicaoRef.current) return
+        if (!ativo || requisicao !== requisicaoRef.current) return
         setErro(obterMensagemErro(falha))
       },
     ).finally(() => {
-      if (requisicao === requisicaoRef.current) setCarregando(false)
+      if (ativo && requisicao === requisicaoRef.current) setCarregando(false)
     })
 
     return () => {
-      ++requisicaoRef.current
+      ativo = false
     }
   }, [])
 

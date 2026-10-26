@@ -1,5 +1,5 @@
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import {
   CheckCircle2,
@@ -39,6 +39,8 @@ export default function AtualizacaoHistorico({
   const [resultado, setResultado] =
     useState<ResultadoAtualizacao | null>(null)
 
+  const inputArquivoRef = useRef<HTMLInputElement>(null)
+
   function selecionarArquivo(evento: ChangeEvent<HTMLInputElement>) {
     setArquivo(evento.target.files?.[0] ?? null)
     setErro('')
@@ -66,6 +68,11 @@ export default function AtualizacaoHistorico({
 
       setResultado(resposta.data)
       setArquivo(null)
+
+      if (inputArquivoRef.current) {
+        inputArquivoRef.current.value = ''
+      }
+
       onHistoricoAtualizado()
     } catch (erroCapturado) {
       setErro(obterMensagemErro(erroCapturado))
@@ -107,6 +114,7 @@ export default function AtualizacaoHistorico({
           {arquivo ? arquivo.name : 'Selecionar CSV de novas vendas'}
         </span>
         <input
+          ref={inputArquivoRef}
           type="file"
           accept=".csv,text/csv"
           onChange={selecionarArquivo}
@@ -157,13 +165,23 @@ export default function AtualizacaoHistorico({
             <strong>{resultado.registros_adicionados}</strong> novo(s)
             registro(s) adicionado(s).
           </p>
+
           <p>
             Total armazenado: {resultado.registros_totais} registros.
           </p>
+
           <p>
-            O modelo não foi retreinado. Os resultados da avaliação
-            externa original foram preservados.
+            {resultado.modelo_retreinado
+              ? 'O modelo foi retreinado durante a atualização.'
+              : 'O modelo existente foi mantido, sem executar novo treinamento.'}
           </p>
+
+          <p>
+            {resultado.avaliacao_externa_preservada
+              ? 'Os resultados da avaliação externa original foram preservados.'
+              : 'A API não confirmou a preservação da avaliação externa nesta atualização.'}
+          </p>
+
           <p>
             Agora você pode gerar outra previsão com o histórico atualizado.
           </p>

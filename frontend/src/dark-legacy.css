@@ -1,0 +1,286 @@
+/*
+ * Marco 09 — ponte visual para páginas antigas ainda não convertidas para MUI.
+ * Importar APÓS App.css e fluxo.css. Mantém os controles e a lógica existentes.
+ * Remover gradualmente estas regras à medida que as páginas forem migradas.
+ */
+:root { color-scheme: dark; }
+
+.mui-dark-shell {
+  --ui-fundo: #0A0F18;
+  --ui-sidebar: #0D1522;
+  --ui-paper: #111A28;
+  --ui-elevado: #162235;
+  --ui-borda: #263346;
+  --ui-texto: #E8EEF6;
+  --ui-sec: #98A8BC;
+  --ui-turquesa: #20B8A6;
+  --ui-dourado: #CDA65B;
+}
+
+.mui-dark-shell .page-header h1,
+.mui-dark-shell h1,
+.mui-dark-shell h2,
+.mui-dark-shell h3,
+.mui-dark-shell .metric-value,
+.mui-dark-shell .panel strong {
+  color: var(--ui-texto);
+}
+.mui-dark-shell .subtitle,
+.mui-dark-shell .panel-heading p,
+.mui-dark-shell .metric-label,
+.mui-dark-shell .metric-hint,
+.mui-dark-shell .execution-id,
+.mui-dark-shell .chart-footnote,
+.mui-dark-shell .previsao-ajuda,
+.mui-dark-shell .previsao-observacao,
+.mui-dark-shell .empty-executions,
+.mui-dark-shell .execution-count,
+.mui-dark-shell .page-footer {
+  color: var(--ui-sec);
+}
+.mui-dark-shell .eyebrow,
+.mui-dark-shell .heading-icon { color: var(--ui-turquesa); }
+
+.mui-dark-shell .panel,
+.mui-dark-shell .metric-card,
+.mui-dark-shell .training-status,
+.mui-dark-shell .empty-chart,
+.mui-dark-shell .previsao-resultado,
+.mui-dark-shell .shap-container,
+.mui-dark-shell .shap-resumo > div,
+.mui-dark-shell .historico-instrucoes,
+.mui-dark-shell .historico-resultado,
+.mui-dark-shell .guia-template,
+.mui-dark-shell .automl-config,
+.mui-dark-shell .template-informacao {
+  background: var(--ui-paper);
+  color: var(--ui-texto);
+  border: 1px solid var(--ui-borda);
+  box-shadow: none;
+  border-radius: 8px;
+}
+.mui-dark-shell .panel { padding: 22px; }
+
+.mui-dark-shell .upload-area,
+.mui-dark-shell .historico-arquivo,
+.mui-dark-shell .previsao-select,
+.mui-dark-shell .execution-picker select,
+.mui-dark-shell .store-selector select,
+.mui-dark-shell .previsao-select select,
+.mui-dark-shell .guia-template-tabela code,
+.mui-dark-shell .training-info,
+.mui-dark-shell .shap-grafico,
+.mui-dark-shell .previsao-resultado,
+.mui-dark-shell .chart-container {
+  background-color: var(--ui-elevado);
+  color: var(--ui-texto);
+  border-color: var(--ui-borda);
+}
+.mui-dark-shell .upload-area:hover,
+.mui-dark-shell .historico-arquivo:hover {
+  background-color: #1A293A;
+  border-color: var(--ui-turquesa);
+}
+.mui-dark-shell .upload-area strong,
+.mui-dark-shell .upload-area span,
+.mui-dark-shell .dataset-details p,
+.mui-dark-shell .training-status-top,
+.mui-dark-shell .previsao-campo > span,
+.mui-dark-shell .previsao-valor > span,
+.mui-dark-shell .previsao-periodo > div,
+.mui-dark-shell .shap-cabecalho p,
+.mui-dark-shell .guia-template-intro p,
+.mui-dark-shell .historico-instrucoes p,
+.mui-dark-shell .previsao-arquivo span,
+.mui-dark-shell .template-informacao p {
+  color: var(--ui-sec);
+}
+.mui-dark-shell input,
+.mui-dark-shell select,
+.mui-dark-shell textarea {
+  color-scheme: dark;
+}
+.mui-dark-shell input:not([type='file']),
+.mui-dark-shell select,
+.mui-dark-shell textarea {
+  background-color: var(--ui-elevado);
+  color: var(--ui-texto);
+  border-color: var(--ui-borda);
+}
+.mui-dark-shell input::placeholder,
+.mui-dark-shell textarea::placeholder { color: var(--ui-sec); }
+.mui-dark-shell input:focus-visible,
+.mui-dark-shell select:focus-visible,
+.mui-dark-shell textarea:focus-visible {
+  outline-color: var(--ui-turquesa);
+}
+
+.mui-dark-shell .primary-button,
+.mui-dark-shell .previsao-botao,
+.mui-dark-shell .fluxo-link-primario {
+  background: var(--ui-turquesa);
+  color: #071A1D;
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+.mui-dark-shell .primary-button:hover:not(:disabled),
+.mui-dark-shell .previsao-botao:hover:not(:disabled),
+.mui-dark-shell .fluxo-link-primario:hover { background: #18A393; }
+.mui-dark-shell .secondary-button,
+.mui-dark-shell .fluxo-link-secundario,
+.mui-dark-shell .guia-template-expandir {
+  background: var(--ui-elevado);
+  color: var(--ui-texto);
+  border: 1px solid var(--ui-borda);
+}
+.mui-dark-shell .secondary-button:hover,
+.mui-dark-shell .fluxo-link-secundario:hover { background: #1C2C42; }
+
+.mui-dark-shell .status-pill,
+.mui-dark-shell .previsao-algoritmo { background: #173548; color: #83DDD2; }
+.mui-dark-shell .status-pill.concluido,
+.mui-dark-shell .previsao-sucesso,
+.mui-dark-shell .historico-sucesso { background: #11352C; color: #6CDFAD; }
+.mui-dark-shell .status-pill.falhou,
+.mui-dark-shell .status-pill.interrompido,
+.mui-dark-shell .alert-error,
+.mui-dark-shell .previsao-erro { background: #361F29; color: #F3A2A2; border-color: #623545; }
+.mui-dark-shell .warnings,
+.mui-dark-shell .previsao-aviso { background: #332B1D; color: #E4C487; border: 1px solid #584A31; }
+.mui-dark-shell .alert-success { background: #143228; color: #91DEB8; border-color: #2E5A48; }
+
+.mui-dark-shell .fluxo-tabela th,
+.mui-dark-shell .fluxo-tabela td,
+.mui-dark-shell .guia-template-tabela th,
+.mui-dark-shell .guia-template-tabela td {
+  color: var(--ui-texto);
+  border-color: var(--ui-borda);
+}
+.mui-dark-shell .fluxo-tabela th,
+.mui-dark-shell .guia-template-tabela th { color: var(--ui-sec); background-color: var(--ui-sidebar); }
+.mui-dark-shell .fluxo-tabela tr:hover td { background-color: var(--ui-elevado); }
+
+/* O gráfico de SHAP continua com as cores de significado definidas pelo modelo. */
+.mui-dark-shell .shap-nota,
+.mui-dark-shell .shap-legenda,
+.mui-dark-shell .shap-metodo { color: var(--ui-sec); }
+
+@media (max-width: 760px) {
+  .mui-dark-shell .panel { padding: 17px; }
+}
+
+/* Marco 09: acabamento da explicabilidade diária no tema escuro. */
+.mui-dark-shell .shap-cabecalho {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.mui-dark-shell .shap-cabecalho > div:first-child {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.mui-dark-shell .shap-metodo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  white-space: nowrap;
+  padding: 5px 10px;
+  min-height: 26px;
+  line-height: 1;
+  border-radius: 6px;
+  background-color: rgba(32, 184, 166, 0.10);
+  border: 1px solid rgba(32, 184, 166, 0.28);
+  color: #7DE0D5;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+/* SHAP — layout mais compacto */
+
+.mui-dark-shell .shap-container {
+  box-sizing: border-box;
+  padding: 20px 22px;
+}
+
+.mui-dark-shell .shap-cabecalho {
+  align-items: center;
+  gap: 12px;
+}
+
+.mui-dark-shell .shap-cabecalho h3 {
+  font-size: 16px;
+  margin: 0 0 5px;
+}
+
+.mui-dark-shell .shap-cabecalho p {
+  margin: 0;
+}
+
+.mui-dark-shell .shap-container .previsao-controles {
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.mui-dark-shell .shap-container .previsao-campo {
+  width: 250px;
+  max-width: 100%;
+  gap: 6px;
+}
+
+.mui-dark-shell .shap-container .previsao-select {
+  min-height: 40px;
+  padding: 0 11px;
+  border-radius: 7px;
+}
+
+.mui-dark-shell .shap-container .previsao-select select {
+  min-height: 40px;
+  padding: 9px 0;
+}
+
+.mui-dark-shell .shap-container .secondary-button {
+  width: auto;
+  min-width: 210px;
+  min-height: 40px;
+  padding: 9px 14px;
+  margin: 0;
+  border-radius: 7px;
+}
+
+.mui-dark-shell .shap-resumo {
+  gap: 12px;
+  margin: 14px 0 16px;
+}
+
+.mui-dark-shell .shap-resumo > div {
+  box-sizing: border-box;
+  min-height: 72px;
+  padding: 12px 15px;
+  gap: 5px;
+  border-radius: 7px;
+}
+
+.mui-dark-shell .shap-resumo strong {
+  font-size: 20px;
+  line-height: 1.25;
+}
+
+@media (max-width: 680px) {
+  .mui-dark-shell .shap-container {
+    padding: 16px;
+  }
+
+  .mui-dark-shell .shap-container .previsao-campo,
+  .mui-dark-shell .shap-container .secondary-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .mui-dark-shell .shap-resumo {
+    grid-template-columns: 1fr;
+    gap: 9px;
+  }
+}
